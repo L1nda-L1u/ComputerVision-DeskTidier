@@ -34,12 +34,12 @@ Too many objects on the desk usually indicate clutter.
 
 Different categories contribute differently to clutter.
 
-| Category        | Penalty per Object | Objects                                            | Description                                 |
-| --------------- | ------------------ | -------------------------------------------------- | ------------------------------------------- |
-| Core Work Items | 0                  | laptop, mouse, book, notebook                      | Essential working tools                     |
-| Study Items     | 0                  | pen, pencil, phone, eraser, earphones, sticky note | Normal study-related objects                |
-| Temporary Items | 2                  | mug, bowl, bottle, scissor，tape                   | Short-term items that may cause distraction |
-| Clutter Items   | 6                  | cable, spitball, ring-pull can                     | Objects highly associated with mess         |
+| Category        | Penalty per Object | Objects                                                    | Description                                 |
+| --------------- | ------------------ | ---------------------------------------------------------- | ------------------------------------------- |
+| Core Work Items | 0                  | laptop, mouse, book, notebook                              | Essential working tools                     |
+| Study Items     | 0                  | pen, pencil, phone, eraser, earphones, sticky note, marker | Normal study-related objects                |
+| Temporary Items | 2                  | mug, bowl, bottle, scissor，tape                           | Short-term items that may cause distraction |
+| Clutter Items   | 6                  | cable, spitball, ring-pull can，food packaging             | Objects highly associated with mess         |
 ---
 
 # 4. Workspace Obstruction Penalty
