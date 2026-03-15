@@ -10,10 +10,7 @@ Tidy Score = 100 − Total Penalty
 Where:
 ```
 Total Penalty =
-Object Load Penalty
-+ Category Penalty
-+ Workspace Obstruction Penalty
-+ Spatial Disorder Penalty
+Object Load Penalty + Category Penalty + Workspace Obstruction Penalty + Spatial Disorder Penalty
 ```
 ---
 # 2. Object Load Penalty (Number of Objects)
