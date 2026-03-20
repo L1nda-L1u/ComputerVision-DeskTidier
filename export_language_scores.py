@@ -21,7 +21,6 @@ IMAGES = [
     "desk_074.jpg",
     "desk_066.jpg",
     "desk_022.jpg",
-    "desk_109.jpg",
 ]
 
 
