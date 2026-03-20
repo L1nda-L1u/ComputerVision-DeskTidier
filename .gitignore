@@ -1,3 +1,5 @@
 yolov8n.pt
 detection_output/
 classifier/desk_classifier.pth
+__pycache__/
+*.pyc
