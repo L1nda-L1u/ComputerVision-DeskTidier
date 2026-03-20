@@ -31,8 +31,17 @@ import numpy as np
 
 # Re-export Detection so callers don't need a second import
 try:
-    import importlib, sys
-    _scoring = importlib.import_module("Tidy Scoring System")
+    import importlib.util
+    import sys
+    from pathlib import Path as _Path
+
+    _scoring_path = _Path(__file__).resolve().parent / "scoring_module" / "scripts" / "Tidy Scoring System.py"
+    _spec = importlib.util.spec_from_file_location("tidy_scoring_system", str(_scoring_path))
+    if _spec is None or _spec.loader is None:
+        raise RuntimeError("Failed to load scoring module")
+    _scoring = importlib.util.module_from_spec(_spec)
+    sys.modules["tidy_scoring_system"] = _scoring
+    _spec.loader.exec_module(_scoring)
     Detection = _scoring.Detection
     infer_category = _scoring.infer_category
 except Exception:

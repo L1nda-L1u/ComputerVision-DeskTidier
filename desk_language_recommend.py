@@ -184,8 +184,17 @@ def generate_language_recommendations(
     # Categorise detected labels for strategic suggestions
     # Import infer_category from scoring system
     try:
-        import importlib
-        _scoring = importlib.import_module("Tidy Scoring System")
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        _scoring_path = Path(__file__).resolve().parent / "scoring_module" / "scripts" / "Tidy Scoring System.py"
+        _spec = importlib.util.spec_from_file_location("tidy_scoring_system", str(_scoring_path))
+        if _spec is None or _spec.loader is None:
+            raise RuntimeError("Failed to load scoring module")
+        _scoring = importlib.util.module_from_spec(_spec)
+        sys.modules["tidy_scoring_system"] = _scoring
+        _spec.loader.exec_module(_scoring)
         _infer = _scoring.infer_category
     except Exception:
         def _infer(label):
@@ -233,8 +242,17 @@ if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
-    from importlib import import_module
-    scoring = import_module("Tidy Scoring System")
+    import importlib.util
+    from pathlib import Path
+
+    _scoring_path = Path(__file__).resolve().parent / "scoring_module" / "scripts" / "Tidy Scoring System.py"
+    _spec = importlib.util.spec_from_file_location("tidy_scoring_system", str(_scoring_path))
+    if _spec is None or _spec.loader is None:
+        raise RuntimeError("Failed to load scoring module")
+    scoring = importlib.util.module_from_spec(_spec)
+    import sys as _sys
+    _sys.modules["tidy_scoring_system"] = scoring
+    _spec.loader.exec_module(scoring)
     Detection = scoring.Detection
 
     # Demo detections (a messy desk)
