@@ -374,7 +374,11 @@ def draw_after_image(
 
 # ──────────────────────── Standalone runner ────────────────────────────────────
 
-def run_standalone(image_path: str, model_path: str = "yolov8n.pt", conf: float = 0.05):
+_DEFAULT_YOLO = str(Path(__file__).resolve().parent / "runs" / "detect" / "desk_tidy_runs"
+                     / "v4_yolov8m_roboflow_style" / "weights" / "best.pt")
+
+
+def run_standalone(image_path: str, model_path: str = _DEFAULT_YOLO, conf: float = 0.4):
     """Run YOLO detection → plan → draw both images."""
     from ultralytics import YOLO
 
@@ -402,7 +406,6 @@ def run_standalone(image_path: str, model_path: str = "yolov8n.pt", conf: float 
     zones = make_default_zones(w, h)
     plans = plan_actions(detections, zones)
 
-    # Summary
     for p in plans:
         print(f"  {p['label']:15s} -> {p['action']:6s} (target: {p['target_zone']})")
 
@@ -415,7 +418,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Desk recommendation visualization")
     parser.add_argument("--image", type=str, default="jpg_images/desk_065.jpg")
-    parser.add_argument("--model", type=str, default="yolov8n.pt")
-    parser.add_argument("--conf", type=float, default=0.05)
+    parser.add_argument("--model", type=str, default=_DEFAULT_YOLO)
+    parser.add_argument("--conf", type=float, default=0.4)
     args = parser.parse_args()
     run_standalone(args.image, args.model, args.conf)

@@ -2,6 +2,7 @@ yolov8n.pt
 yolov8m.pt
 *.pt
 detection_output/
+pipeline_output/
 classifier/desk_classifier.pth
 runs/
 __pycache__/

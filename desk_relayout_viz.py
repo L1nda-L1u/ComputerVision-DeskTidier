@@ -384,7 +384,11 @@ class DeskRelayoutVisualizer:
 
 # ──────────────────────── Standalone runner ────────────────────────────────────
 
-def run_standalone(image_path: str, model_path: str = "yolov8n.pt", conf: float = 0.05):
+_DEFAULT_YOLO = str(Path(__file__).resolve().parent / "runs" / "detect" / "desk_tidy_runs"
+                     / "v4_yolov8m_roboflow_style" / "weights" / "best.pt")
+
+
+def run_standalone(image_path: str, model_path: str = _DEFAULT_YOLO, conf: float = 0.4):
     from ultralytics import YOLO
 
     model = YOLO(model_path)
@@ -392,7 +396,6 @@ def run_standalone(image_path: str, model_path: str = "yolov8n.pt", conf: float 
     r = results[0]
     names = getattr(r, "names", None) or {}
 
-    # Build lightweight detection objects
     @dataclass
     class Det:
         label: str
@@ -422,7 +425,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Generate reorganised desk layout")
     parser.add_argument("--image", type=str, default="jpg_images/desk_065.jpg")
-    parser.add_argument("--model", type=str, default="yolov8n.pt")
-    parser.add_argument("--conf", type=float, default=0.05)
+    parser.add_argument("--model", type=str, default=_DEFAULT_YOLO)
+    parser.add_argument("--conf", type=float, default=0.4)
     args = parser.parse_args()
     run_standalone(args.image, args.model, args.conf)
