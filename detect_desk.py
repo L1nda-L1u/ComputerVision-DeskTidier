@@ -13,9 +13,9 @@ from ultralytics import YOLO
 # Desk-relevant COCO classes only (Scoring Framework)
 # Note: COCO has no pen, pencil, earphones, notebook - fine-tune for those
 DESK_CLASSES = {
-    "laptop", "mouse", "keyboard", "cell phone", "book",
+    "laptop", "mouse", "keyboard", "phone", "book",
     "bottle", "cup", "bowl", "scissors", "clock", "remote",
-    "dining table",  # desk surface
+    "dining table", "airpods" # desk surface
 }
 
 
