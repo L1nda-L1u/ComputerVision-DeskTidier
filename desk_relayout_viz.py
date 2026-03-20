@@ -439,6 +439,39 @@ def _pack_items_no_overlap(
     return placed, overflow
 
 
+def _workspace_scale_for_fit(
+    items: List[_Item],
+    zone_rect: Tuple[int, int, int, int],
+    base_scale: float,
+    vertical_orientation: bool = False,
+    header_h: int = 50,
+    padding: int = 24,
+) -> float:
+    """
+    Shrink scale so the largest workspace item (e.g. laptop) fits inside the zone.
+    Without this, a tall/wide laptop at global_scale can overflow and never get drawn.
+    """
+    zx, zy, zw, zh = zone_rect
+    inner_w = max(8, zw - 2 * padding)
+    inner_h = max(8, zh - header_h - 2 * padding)
+    max_sw, max_sh = 0, 0
+    for item in items:
+        if item.patch_bgra is None or item.patch_bgra.size == 0:
+            continue
+        label = item.label.strip().lower()
+        want_vertical = vertical_orientation and label in VERTICAL_LABELS
+        patch = _ensure_orientation(item.patch_bgra.copy(), label, want_vertical)
+        ph, pw = patch.shape[:2]
+        sw = max(8, int(pw * base_scale))
+        sh = max(8, int(ph * base_scale))
+        max_sw = max(max_sw, sw)
+        max_sh = max(max_sh, sh)
+    if max_sw == 0:
+        return base_scale
+    fit = min(inner_w / max_sw, inner_h / max_sh, 1.0)
+    return base_scale * fit
+
+
 # ──────────────────────── Main class ──────────────────────────────────────────
 
 class DeskRelayoutVisualizer:
@@ -619,9 +652,18 @@ class DeskRelayoutVisualizer:
             cy = my + 50 + sh // 2
             _paste_bgra(canvas, scaled, cx, cy)
 
+        workspace_overflow: List[_Item] = []
         if other_workspace:
-            placed, _ = _pack_items_no_overlap(
-                other_workspace, zone_rects["workspace"], global_scale,
+            ws_scale = _workspace_scale_for_fit(
+                other_workspace,
+                zone_rects["workspace"],
+                global_scale,
+                vertical_orientation=False,
+                header_h=50,
+                padding=24,
+            )
+            placed, workspace_overflow = _pack_items_no_overlap(
+                other_workspace, zone_rects["workspace"], ws_scale,
                 vertical_orientation=False, header_h=50, padding=24, gap=12)
             self._draw_placed(canvas, placed)
 
@@ -633,7 +675,7 @@ class DeskRelayoutVisualizer:
         self._draw_placed(canvas, placed_stat)
 
         ref_items = zone_items.get("reference", [])
-        ref_combined = ref_items + overflow
+        ref_combined = ref_items + overflow + workspace_overflow
         if ref_combined:
             placed_ref, _ = _pack_items_no_overlap(
                 ref_combined, zone_rects["reference"], global_scale,
