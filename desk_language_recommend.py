@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -148,6 +149,63 @@ def _strategic_suggestions(
     return suggestions
 
 
+def _group_object_suggestions(detections: list) -> List[str]:
+    """
+    Group object-level suggestions by action + target zone.
+    Example:
+      Move to stationery zone: pen, pencil, marker
+    """
+
+    grouped: Dict[Tuple[str, str], set[str]] = defaultdict(set)
+    for d in detections:
+        key = d.label.strip().lower()
+        if key not in _ZONE_MAP:
+            continue
+        zone, verb = _ZONE_MAP[key]
+        grouped[(verb, zone)].add(key)
+
+    ordered_groups = sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1]))
+    lines: List[str] = []
+    for (verb, zone), labels in ordered_groups:
+        items = ", ".join(sorted(labels))
+        if verb == "Remove":
+            lines.append(f"Remove from desk: {items}.")
+        elif verb == "Route":
+            lines.append(f"Route to {zone}: {items}.")
+        elif verb == "Keep":
+            lines.append(f"Keep in {zone}: {items}.")
+        else:
+            lines.append(f"Move to {zone}: {items}.")
+    return lines
+
+
+def _group_object_actions(detections: list) -> List[Dict[str, str]]:
+    """
+    Structured grouped actions for table-style output.
+    Returns list like:
+      {"action": "Move", "zone": "stationery zone", "items": "pen, pencil"}
+    """
+
+    grouped: Dict[Tuple[str, str], set[str]] = defaultdict(set)
+    for d in detections:
+        key = d.label.strip().lower()
+        if key not in _ZONE_MAP:
+            continue
+        zone, verb = _ZONE_MAP[key]
+        grouped[(verb, zone)].add(key)
+
+    rows: List[Dict[str, str]] = []
+    for (verb, zone), labels in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
+        rows.append(
+            {
+                "action": verb,
+                "zone": zone,
+                "items": ", ".join(sorted(labels)),
+            }
+        )
+    return rows
+
+
 # ──────────────────── Main entry point ────────────────────────────────────────
 
 def generate_language_recommendations(
@@ -213,19 +271,8 @@ def generate_language_recommendations(
     # Strategic suggestions
     suggestions = _strategic_suggestions(penalties, dispersion_label, cat_labels)
 
-    # Per-object suggestions (deduplicated, grouped by target zone)
-    seen_labels = set()
-    per_object: List[str] = []
-    for d in detections:
-        key = d.label.strip().lower()
-        if key in seen_labels:
-            continue
-        seen_labels.add(key)
-        rec = recommendation_for_label(d.label)
-        if rec:
-            per_object.append(rec)
-
-    suggestions.extend(per_object)
+    # Grouped object suggestions (clearer and less repetitive)
+    suggestions.extend(_group_object_suggestions(detections))
 
     return {
         "decision": decision,
@@ -233,6 +280,7 @@ def generate_language_recommendations(
         "tidy_level": level,
         "reasons": reasons,
         "suggestions": suggestions,
+        "grouped_actions": _group_object_actions(detections),
     }
 
 
