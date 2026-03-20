@@ -23,10 +23,10 @@ Too many objects on the desk usually indicate clutter.
 | Number of Detected Objects | Penalty |
 | -------------------------- | ------- |
 | ≤ 8                        | 0       |
-| 9 – 12                     | 5       |
-| 13 – 15                    | 10      |
-| 16 – 18                    | 15      |
-| > 18                       | 20      |
+| 9 – 12                     | 3       |
+| 13 – 15                    | 5       |
+| 16 – 18                    | 8       |
+| > 18                       | 10      |
 
 ---
 
@@ -39,7 +39,7 @@ Different categories contribute differently to clutter.
 | Core Work Items | 0                  | laptop, mouse, book, notebook                              | Essential working tools                     |
 | Study Items     | 0                  | pen, pencil, phone, eraser, earphones, sticky note, marker | Normal study-related objects                |
 | Temporary Items | 2                  | mug, bowl, bottle, scissor，tape                           | Short-term items that may cause distraction |
-| Clutter Items   | 6                  | cable, spitball, ring-pull can，food packaging             | Objects highly associated with mess         |
+| Clutter Items   | 4                  | cable, spitball, ring-pull can，food packaging             | Objects highly associated with mess         |
 ---
 
 # 4. Workspace Obstruction Penalty
@@ -49,7 +49,7 @@ The **central workspace area** should remain clear.
 Workspace Zone Definition:
 
 ```
-Central 40% area of the desk image
+Central 60% area of the desk image
 ```
 
 Penalty rules:
@@ -101,6 +101,15 @@ Orientation can be estimated using:
 * minimum area rectangle (OpenCV)
 
 The **desk orientation** is assumed to be horizontal.
+
+Category-specific angle estimation strategy:
+
+* Rectangular items (`laptop`, `book`, `notebook`, `phone`, `cell phone`, `sticky note`)  
+  -> estimate orientation with `minAreaRect` (OpenCV)
+* Elongated items (`pen`, `pencil`, `marker`, `scissor`, `scissors`)  
+  -> estimate orientation with `HoughLinesP`
+* Other categories (for example `mug`, `bowl`, `cable`)  
+  -> angle is not estimated (`None`) and alignment penalty is skipped for that object
 
 ---
 

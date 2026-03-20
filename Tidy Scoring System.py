@@ -9,10 +9,14 @@ GitHub: https://github.com/L1nda-L1u/ComputerVision-DeskTidier.git
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
 
 
 GITHUB_REPO_URL = "https://github.com/L1nda-L1u/ComputerVision-DeskTidier.git"
@@ -23,7 +27,7 @@ CATEGORY_PENALTY_PER_OBJECT: Dict[str, int] = {
     "Core Work Items": 0,
     "Study Items": 0,
     "Temporary Items": 2,
-    "Clutter Items": 6,
+    "Clutter Items": 4,
 }
 
 WORKSPACE_PENALTY_IF_IN_WORKSPACE: Dict[str, int] = {
@@ -80,6 +84,120 @@ def iou_xyxy(a: Tuple[float, float, float, float], b: Tuple[float, float, float,
     return inter_area / union
 
 
+def bbox_area_xyxy(bbox: Tuple[float, float, float, float]) -> float:
+    x1, y1, x2, y2 = bbox
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+
+def intersection_area_xyxy(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    return inter_w * inter_h
+
+
+ANGLE_RECT_LABELS = {
+    "laptop",
+    "book",
+    "phone",
+    "sticky note",
+    "eraser",
+    "foodpacking",
+    "food packaging",
+    "earphones",
+}
+
+ANGLE_LINE_LABELS = {
+    "pen",
+    "pencil",
+    "marker",
+}
+
+
+def normalize_orientation_deg(angle_deg: float) -> float:
+    """
+    Normalize orientation to [-90, 90) since 0 and 180 represent same axis.
+    """
+
+    a = ((angle_deg + 90.0) % 180.0) - 90.0
+    return a
+
+
+def estimate_angle_rect_deg(roi_bgr: np.ndarray) -> Optional[float]:
+    if roi_bgr.size == 0:
+        return None
+    gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    cnt = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(cnt)
+    if area < 0.02 * float(roi_bgr.shape[0] * roi_bgr.shape[1]):
+        return None
+
+    rect = cv2.minAreaRect(cnt)
+    (w, h) = rect[1]
+    angle = float(rect[2])
+    if w < h:
+        angle += 90.0
+    return normalize_orientation_deg(angle)
+
+
+def estimate_angle_line_deg(roi_bgr: np.ndarray) -> Optional[float]:
+    if roi_bgr.size == 0:
+        return None
+    gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 60, 160)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1,
+        theta=np.pi / 180.0,
+        threshold=20,
+        minLineLength=max(10, int(min(roi_bgr.shape[:2]) * 0.25)),
+        maxLineGap=8,
+    )
+    if lines is None or len(lines) == 0:
+        return None
+
+    sum_cos2 = 0.0
+    sum_sin2 = 0.0
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
+        length = math.hypot(dx, dy)
+        if length < 6:
+            continue
+        ang = math.atan2(dy, dx)
+        # Double-angle trick for 180-degree periodic orientations.
+        sum_cos2 += length * math.cos(2.0 * ang)
+        sum_sin2 += length * math.sin(2.0 * ang)
+
+    if abs(sum_cos2) < 1e-6 and abs(sum_sin2) < 1e-6:
+        return None
+
+    ori = 0.5 * math.atan2(sum_sin2, sum_cos2)
+    return normalize_orientation_deg(math.degrees(ori))
+
+
+def estimate_object_angle_deg(label: str, roi_bgr: np.ndarray) -> Optional[float]:
+    l = label.strip().lower()
+    if l in ANGLE_RECT_LABELS:
+        return estimate_angle_rect_deg(roi_bgr) or estimate_angle_line_deg(roi_bgr)
+    if l in ANGLE_LINE_LABELS:
+        return estimate_angle_line_deg(roi_bgr) or estimate_angle_rect_deg(roi_bgr)
+    return None
+
+
 @dataclass(frozen=True)
 class Detection:
     """
@@ -103,12 +221,12 @@ def object_load_penalty(num_objects: int) -> int:
     if num_objects <= 8:
         return 0
     if 9 <= num_objects <= 12:
-        return 5
+        return 3
     if 13 <= num_objects <= 15:
-        return 10
+        return 5
     if 16 <= num_objects <= 18:
-        return 15
-    return 20
+        return 8
+    return 10
 
 
 def infer_category(label: str) -> str:
@@ -260,18 +378,35 @@ def tidy_score(
     left, top, right, bottom = central_workspace_rect(image_w, image_h)
     workspace_penalty = 0
     workspace_blocked_objects = 0
+    workspace_blocked_categories = set()
     for d in detections:
         cx, cy = bbox_center_xyxy(d.bbox)
         if left <= cx <= right and top <= cy <= bottom:
             workspace_blocked_objects += 1
             cat = infer_category(d.label)
-            workspace_penalty += WORKSPACE_PENALTY_IF_IN_WORKSPACE[cat]
+            workspace_blocked_categories.add(cat)
+    # Apply workspace penalty once per category (not once per object).
+    for cat in workspace_blocked_categories:
+        workspace_penalty += WORKSPACE_PENALTY_IF_IN_WORKSPACE[cat]
 
     # 5.1) Object Overlap Penalty
+    # To avoid over-counting, we require both:
+    # - IoU > 0.30 (framework rule)
+    # - Intersection covers at least 50% of the smaller box
+    # Also skip likely duplicate detections of the same object (same label + near containment).
     overlap_pairs = 0
     overlap_penalty = 0
     for a, b in combinations(detections, 2):
-        if iou_xyxy(a.bbox, b.bbox) > 0.3:
+        iou = iou_xyxy(a.bbox, b.bbox)
+        inter = intersection_area_xyxy(a.bbox, b.bbox)
+        smaller = min(bbox_area_xyxy(a.bbox), bbox_area_xyxy(b.bbox))
+        contain = inter / smaller if smaller > 0 else 0.0
+
+        # Same-label near-contained boxes are often duplicate predictions.
+        if a.label == b.label and contain >= 0.85:
+            continue
+
+        if iou > 0.3 and contain >= 0.5:
             overlap_pairs += 1
     overlap_penalty = min(10, overlap_pairs * 2)
 
@@ -307,7 +442,10 @@ def tidy_score(
     if per_cat_counts:
         cat_str = ", ".join([f"{k.split()[0]}={v}" for k, v in sorted(per_cat_counts.items())])
         reasons.append(f"Category counts: {cat_str}; category penalty {category_penalty}")
-    reasons.append(f"{workspace_blocked_objects} objects in central workspace -> workspace penalty {workspace_penalty}")
+    reasons.append(
+        f"{workspace_blocked_objects} objects in central workspace; "
+        f"blocked categories={len(workspace_blocked_categories)} -> workspace penalty {workspace_penalty}"
+    )
     reasons.append(f"Overlap pairs (IoU>0.30): {overlap_pairs} -> overlap penalty {overlap_penalty}")
     reasons.append(f"Dispersion: {dispersion_label} -> dispersion penalty {dispersion_penalty}")
     if misaligned_count > 0:
@@ -362,6 +500,11 @@ if __name__ == "__main__":
         type=float,
         default=15.0,
         help="Misalignment threshold angle (deg) for applying alignment penalty",
+    )
+    parser.add_argument(
+        "--estimate-object-angle",
+        action="store_true",
+        help="Estimate object angles from each ROI for alignment penalty.",
     )
     args = parser.parse_args()
 
@@ -431,17 +574,34 @@ if __name__ == "__main__":
         names = getattr(r, "names", None) or getattr(model, "names", None) or {}
 
         detections: List[Detection] = []
+        orig_img = getattr(r, "orig_img", None)
         if getattr(r, "boxes", None) is not None and len(r.boxes) > 0:
             # ultralytics boxes: xyxy, conf, cls
             for xyxy, conf, cls_id in zip(r.boxes.xyxy.tolist(), r.boxes.conf.tolist(), r.boxes.cls.tolist()):
                 cls_id_int = int(cls_id)
                 label = names.get(cls_id_int, str(cls_id_int))
+                x1, y1, x2, y2 = (
+                    float(xyxy[0]),
+                    float(xyxy[1]),
+                    float(xyxy[2]),
+                    float(xyxy[3]),
+                )
+                angle_deg = None
+                if args.estimate_object_angle and isinstance(orig_img, np.ndarray):
+                    h_img, w_img = orig_img.shape[:2]
+                    ix1 = max(0, min(w_img, int(round(x1))))
+                    iy1 = max(0, min(h_img, int(round(y1))))
+                    ix2 = max(0, min(w_img, int(round(x2))))
+                    iy2 = max(0, min(h_img, int(round(y2))))
+                    if ix2 > ix1 and iy2 > iy1:
+                        roi = orig_img[iy1:iy2, ix1:ix2]
+                        angle_deg = estimate_object_angle_deg(label, roi)
                 detections.append(
                     Detection(
                         label=label,
                         confidence=float(conf),
-                        bbox=(float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])),
-                        angle_deg=None,  # alignment angle is not available from YOLO detection alone
+                        bbox=(x1, y1, x2, y2),
+                        angle_deg=angle_deg,
                     )
                 )
 
