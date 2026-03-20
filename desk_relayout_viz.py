@@ -237,8 +237,17 @@ def _trim_transparent(patch: np.ndarray) -> np.ndarray:
 
 # ──────────────────────── Alpha paste ─────────────────────────────────────────
 
-def _paste_bgra(canvas: np.ndarray, patch: np.ndarray, cx: int, cy: int) -> None:
-    """Paste a BGRA patch onto a BGR canvas with alpha blending."""
+def _paste_bgra(
+    canvas: np.ndarray,
+    patch: np.ndarray,
+    cx: int,
+    cy: int,
+    alpha_scale: float = 1.0,
+) -> None:
+    """Paste a BGRA patch onto a BGR canvas with alpha blending.
+
+    alpha_scale: multiply patch alpha (0–1) for e.g. semi-transparent removed-item thumbs.
+    """
     ph, pw = patch.shape[:2]
     x1 = cx - pw // 2
     y1 = cy - ph // 2
@@ -259,10 +268,15 @@ def _paste_bgra(canvas: np.ndarray, patch: np.ndarray, cx: int, cy: int) -> None
         return
 
     region = patch[sy:ey, sx:ex]
-    alpha = region[:, :, 3:4].astype(np.float32) / 255.0
+    alpha = region[:, :, 3:4].astype(np.float32) / 255.0 * float(alpha_scale)
+    alpha = np.clip(alpha, 0.0, 1.0)
     bgr = region[:, :, :3].astype(np.float32)
     dst = canvas[y1:y2, x1:x2].astype(np.float32)
     canvas[y1:y2, x1:x2] = (bgr * alpha + dst * (1.0 - alpha)).astype(np.uint8)
+
+
+# Opacity for cutouts in the "Removed Items" zone (same scale as other objects, ghosted)
+REMOVED_THUMB_ALPHA = 0.48
 
 
 # ──────────────────────── Drawing helpers ─────────────────────────────────────
@@ -634,16 +648,33 @@ class DeskRelayoutVisualizer:
             _put_text(canvas, text, (zx + 20, zy + 120),
                       color_rgb=(140, 140, 140), scale=0.65)
 
-            thumb_x = zx + 20
-            for item in removed[:8]:
-                if item.patch_bgra is not None and item.patch_bgra.size > 0:
-                    ph, pw = item.patch_bgra.shape[:2]
-                    s = min(90 / pw, 90 / ph, 1.0)
-                    tw_s = max(8, int(pw * s))
-                    th_s = max(8, int(ph * s))
-                    thumb = cv2.resize(item.patch_bgra, (tw_s, th_s), interpolation=cv2.INTER_AREA)
-                    _paste_bgra(canvas, thumb, thumb_x + tw_s // 2, zy + 200)
-                    thumb_x += tw_s + 12
+            pad_x = 24
+            pad_bottom = 20
+            text_block_h = 125
+            inner_x = zx + pad_x
+            inner_w = max(8, zw - 2 * pad_x)
+            row_top = zy + text_block_h
+            row_h = max(40, zh - text_block_h - pad_bottom)
+            gap = 12
+            thumbs = removed[:8]
+            n_items = len(thumbs)
+            slot_w = (inner_w - gap * max(0, n_items - 1)) / max(n_items, 1)
+            # Fit thumbs inside the box: same max side per slot, not taller than row
+            max_side = min(slot_w, row_h * 0.92)
+
+            for idx, item in enumerate(thumbs):
+                if item.patch_bgra is None or item.patch_bgra.size == 0:
+                    continue
+                ph, pw = item.patch_bgra.shape[:2]
+                s = min(max_side / max(pw, ph), 1.0)
+                tw_s = max(8, int(pw * s))
+                th_s = max(8, int(ph * s))
+                thumb = cv2.resize(
+                    item.patch_bgra, (tw_s, th_s), interpolation=cv2.INTER_AREA
+                )
+                cx = int(inner_x + idx * (slot_w + gap) + slot_w / 2)
+                cy = int(row_top + row_h / 2)
+                _paste_bgra(canvas, thumb, cx, cy, alpha_scale=REMOVED_THUMB_ALPHA)
 
         total = len(self.items)
         kept = sum(1 for i in self.items if i.zone != "remove")
