@@ -117,6 +117,7 @@ def run_yolo(
         imgsz=imgsz,
         device=device,
         verbose=False,
+        agnostic_nms=True,
     )[0]
 
     names = getattr(pred, "names", None) or getattr(model, "names", None) or {}
@@ -255,6 +256,7 @@ def process_image(
     draw_plan_image(str(image_path), plans, zones, plan_path)
     draw_after_image(str(image_path), plans, zones, after_path)
 
+    # SAM masks are auto-computed inside the visualizer
     viz = DeskRelayoutVisualizer(str(image_path), detections)
     viz.generate(relayout_path)
 

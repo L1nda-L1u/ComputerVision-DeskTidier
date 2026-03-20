@@ -51,7 +51,7 @@ _ZONE_MAP: Dict[str, Tuple[str, str]] = {
     "coffee cup":     ("temporary item zone", "Move"),
     "bowl":           ("temporary item zone", "Move"),
     "bottle":         ("temporary item zone", "Move"),
-    "ring-pull can":  ("temporary item zone", "Move"),
+    "ring-pull can":  ("off the desk",    "Remove"),
 
     "cable":          ("desk edge",       "Route"),
     "charger":        ("desk edge",       "Route"),

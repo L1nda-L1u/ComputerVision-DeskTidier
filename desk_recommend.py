@@ -189,8 +189,8 @@ def target_zone_for_label(label: str) -> str:
         "pen", "pencil", "marker", "eraser", "scissors", "scissor",
         "tape", "phone", "cell phone", "earphones",
     }
-    temporary = {"cup", "mug", "bowl", "bottle", "ring-pull can", "cable", "charger"}
-    remove = {"spitball", "food packaging", "trash", "packaging", "food", "dining table"}
+    temporary = {"cup", "mug", "bowl", "bottle", "cable", "charger"}
+    remove = {"spitball", "food packaging", "trash", "packaging", "food", "dining table", "ring-pull can"}
 
     if l in workspace:
         return "workspace"
@@ -388,7 +388,7 @@ def run_standalone(image_path: str, model_path: str = _DEFAULT_YOLO, conf: float
     h, w = img.shape[:2]
 
     model = YOLO(model_path)
-    results = model.predict(source=image_path, conf=conf, verbose=False)
+    results = model.predict(source=image_path, conf=conf, verbose=False, agnostic_nms=True)
     r = results[0]
     names = getattr(r, "names", None) or {}
 
