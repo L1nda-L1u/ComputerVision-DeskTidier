@@ -3,6 +3,8 @@ yolov8m.pt
 *.pt
 detection_output/
 pipeline_output/
+teacher_demo_output/
+teacher_demo/
 classifier/desk_classifier.pth
 runs/
 __pycache__/

@@ -211,6 +211,267 @@ class Detection:
     confidence: float
     bbox: Tuple[float, float, float, float]
     angle_deg: Optional[float] = None
+    # Optional foreground mask inside bbox ROI (uint8 0/255).
+    roi_mask: Optional[np.ndarray] = None
+
+
+def estimate_foreground_mask(roi_bgr: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Estimate object foreground mask inside an ROI.
+    Returns uint8 mask (0/255) with same HxW as ROI.
+    """
+
+    if roi_bgr.size == 0:
+        return None
+
+    h, w = roi_bgr.shape[:2]
+    if h < 8 or w < 8:
+        return None
+
+    # Try GrabCut first (better object-vs-background separation than bbox geometry).
+    try:
+        mask = np.zeros((h, w), np.uint8)
+        bgd_model = np.zeros((1, 65), np.float64)
+        fgd_model = np.zeros((1, 65), np.float64)
+        rect = (1, 1, max(1, w - 2), max(1, h - 2))
+        cv2.grabCut(roi_bgr, mask, rect, bgd_model, fgd_model, 2, cv2.GC_INIT_WITH_RECT)
+        fg = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+    except Exception:
+        fg = None
+
+    if fg is None or int(np.count_nonzero(fg)) == 0:
+        gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Choose polarity with smaller non-zero region as likely object foreground.
+        nz = int(np.count_nonzero(th))
+        inv = 255 - th
+        nz_inv = int(np.count_nonzero(inv))
+        fg = th if 0 < nz < nz_inv else inv
+
+    kernel = np.ones((3, 3), np.uint8)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel, iterations=1)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    if int(np.count_nonzero(fg)) < 10:
+        return None
+    return fg
+
+
+def mask_overlap_metrics(a: Detection, b: Detection) -> Optional[Tuple[float, float]]:
+    """
+    Compute overlap metrics using object masks.
+    Returns (mask_iou, contain) where contain = inter/min(area_a, area_b).
+    Returns None if masks unavailable/invalid.
+    """
+
+    if a.roi_mask is None or b.roi_mask is None:
+        return None
+
+    ax1, ay1, ax2, ay2 = [int(round(v)) for v in a.bbox]
+    bx1, by1, bx2, by2 = [int(round(v)) for v in b.bbox]
+    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0, 0.0
+
+    # Slice overlap on each ROI mask.
+    a_x1 = inter_x1 - ax1
+    a_y1 = inter_y1 - ay1
+    a_x2 = a_x1 + (inter_x2 - inter_x1)
+    a_y2 = a_y1 + (inter_y2 - inter_y1)
+
+    b_x1 = inter_x1 - bx1
+    b_y1 = inter_y1 - by1
+    b_x2 = b_x1 + (inter_x2 - inter_x1)
+    b_y2 = b_y1 + (inter_y2 - inter_y1)
+
+    # Guard against shape mismatches.
+    a_h, a_w = a.roi_mask.shape[:2]
+    b_h, b_w = b.roi_mask.shape[:2]
+    if not (0 <= a_x1 < a_w and 0 <= a_y1 < a_h and 0 < a_x2 <= a_w and 0 < a_y2 <= a_h):
+        return None
+    if not (0 <= b_x1 < b_w and 0 <= b_y1 < b_h and 0 < b_x2 <= b_w and 0 < b_y2 <= b_h):
+        return None
+
+    a_patch = a.roi_mask[a_y1:a_y2, a_x1:a_x2] > 0
+    b_patch = b.roi_mask[b_y1:b_y2, b_x1:b_x2] > 0
+    if a_patch.shape != b_patch.shape or a_patch.size == 0:
+        return None
+
+    inter = int(np.logical_and(a_patch, b_patch).sum())
+    area_a = int((a.roi_mask > 0).sum())
+    area_b = int((b.roi_mask > 0).sum())
+    union = area_a + area_b - inter
+    if union <= 0:
+        return None
+
+    iou = inter / union
+    contain = inter / max(1, min(area_a, area_b))
+    return iou, contain
+
+
+def center_in_bbox(center: Tuple[float, float], bbox: Tuple[float, float, float, float]) -> bool:
+    cx, cy = center
+    x1, y1, x2, y2 = bbox
+    return x1 <= cx <= x2 and y1 <= cy <= y2
+
+
+def elongated_overlap_ratio(line_obj: Detection, other_obj: Detection) -> float:
+    """
+    Fraction of elongated object that overlaps with another object.
+    Prefer mask-based overlap when available; fallback to bbox intersection ratio.
+    """
+
+    # Mask-based overlap fraction on elongated object foreground.
+    m = mask_overlap_metrics(line_obj, other_obj)
+    if m is not None and line_obj.roi_mask is not None:
+        lx1, ly1, lx2, ly2 = [int(round(v)) for v in line_obj.bbox]
+        ox1, oy1, ox2, oy2 = [int(round(v)) for v in other_obj.bbox]
+        inter_x1, inter_y1 = max(lx1, ox1), max(ly1, oy1)
+        inter_x2, inter_y2 = min(lx2, ox2), min(ly2, oy2)
+        if inter_x2 > inter_x1 and inter_y2 > inter_y1:
+            a_x1 = inter_x1 - lx1
+            a_y1 = inter_y1 - ly1
+            a_x2 = a_x1 + (inter_x2 - inter_x1)
+            a_y2 = a_y1 + (inter_y2 - inter_y1)
+            lmask = line_obj.roi_mask
+            if (
+                0 <= a_x1 < lmask.shape[1]
+                and 0 <= a_y1 < lmask.shape[0]
+                and 0 < a_x2 <= lmask.shape[1]
+                and 0 < a_y2 <= lmask.shape[0]
+            ):
+                inter_line = int((lmask[a_y1:a_y2, a_x1:a_x2] > 0).sum())
+                line_area = int((lmask > 0).sum())
+                if line_area > 0:
+                    return inter_line / line_area
+
+    # Fallback: bbox intersection fraction on elongated bbox.
+    inter = intersection_area_xyxy(line_obj.bbox, other_obj.bbox)
+    line_area = bbox_area_xyxy(line_obj.bbox)
+    if line_area <= 0:
+        return 0.0
+    return inter / line_area
+
+
+def elongated_axis_cover_ratio(line_obj: Detection, other_obj: Detection) -> float:
+    """
+    Estimate how much of elongated object's principal axis lies over other object's bbox.
+    Useful when contact area is small but placement is clearly "on top of" (e.g., pen on book).
+    """
+
+    if line_obj.roi_mask is None:
+        return 0.0
+
+    ys, xs = np.where(line_obj.roi_mask > 0)
+    if len(xs) < 12:
+        return 0.0
+
+    pts = np.column_stack((xs.astype(np.float32), ys.astype(np.float32)))
+    try:
+        vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
+    except Exception:
+        return 0.0
+
+    x1, y1, x2, y2 = line_obj.bbox
+    roi_w = max(1.0, x2 - x1)
+    roi_h = max(1.0, y2 - y1)
+    axis_len = max(roi_w, roi_h) * 1.2
+
+    p1 = (x0 - vx * axis_len * 0.5, y0 - vy * axis_len * 0.5)
+    p2 = (x0 + vx * axis_len * 0.5, y0 + vy * axis_len * 0.5)
+
+    # Sample along the axis and count points covered by other bbox.
+    ox1, oy1, ox2, oy2 = other_obj.bbox
+    total = 40
+    covered = 0
+    for t in np.linspace(0.0, 1.0, total):
+        sx = float(p1[0] * (1 - t) + p2[0] * t) + x1
+        sy = float(p1[1] * (1 - t) + p2[1] * t) + y1
+        if ox1 <= sx <= ox2 and oy1 <= sy <= oy2:
+            covered += 1
+    return covered / total
+
+
+def draw_overlap_visualization(
+    image_bgr: np.ndarray,
+    detections: List[Detection],
+    overlap_pairs_idx: List[Tuple[int, int]],
+    out_path: Path,
+) -> None:
+    """
+    Save an image visualizing overlap detections.
+    - Overlap objects: red boxes
+    - Non-overlap objects: gray boxes
+    - Overlap pair center links: yellow lines
+    - If mask exists, overlay translucent foreground masks
+    """
+
+    vis = image_bgr.copy()
+    overlap_ids = set()
+    for i, j in overlap_pairs_idx:
+        overlap_ids.add(i)
+        overlap_ids.add(j)
+
+    # Draw all boxes first
+    for idx, d in enumerate(detections):
+        x1, y1, x2, y2 = [int(round(v)) for v in d.bbox]
+        color = (30, 30, 220) if idx in overlap_ids else (130, 130, 130)
+        cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(
+            vis,
+            f"{idx}:{d.label}",
+            (x1, max(16, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+
+        if d.roi_mask is not None:
+            h, w = vis.shape[:2]
+            ix1 = max(0, min(w, x1))
+            iy1 = max(0, min(h, y1))
+            ix2 = max(0, min(w, x2))
+            iy2 = max(0, min(h, y2))
+            if ix2 > ix1 and iy2 > iy1:
+                roi_h = iy2 - iy1
+                roi_w = ix2 - ix1
+                m = d.roi_mask
+                if m.shape[:2] != (roi_h, roi_w):
+                    m = cv2.resize(m, (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
+                color_fill = np.array((0, 0, 255), dtype=np.uint8) if idx in overlap_ids else np.array((180, 180, 180), dtype=np.uint8)
+                patch = vis[iy1:iy2, ix1:ix2]
+                alpha = 0.28
+                mask_bool = m > 0
+                patch[mask_bool] = (patch[mask_bool] * (1 - alpha) + color_fill * alpha).astype(np.uint8)
+                vis[iy1:iy2, ix1:ix2] = patch
+
+    # Draw overlap links
+    for k, (i, j) in enumerate(overlap_pairs_idx, start=1):
+        ax1, ay1, ax2, ay2 = detections[i].bbox
+        bx1, by1, bx2, by2 = detections[j].bbox
+        ca = (int((ax1 + ax2) / 2), int((ay1 + ay2) / 2))
+        cb = (int((bx1 + bx2) / 2), int((by1 + by2) / 2))
+        cv2.line(vis, ca, cb, (0, 215, 255), 2, cv2.LINE_AA)
+        mid = ((ca[0] + cb[0]) // 2, (ca[1] + cb[1]) // 2)
+        cv2.putText(vis, f"O{k}", mid, cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 215, 255), 2, cv2.LINE_AA)
+
+    cv2.putText(
+        vis,
+        f"Overlap pairs: {len(overlap_pairs_idx)}",
+        (16, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.75,
+        (0, 0, 220),
+        2,
+        cv2.LINE_AA,
+    )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_path), vis)
 
 
 def object_load_penalty(num_objects: int) -> int:
@@ -352,6 +613,7 @@ def tidy_score(
     image_size: Tuple[int, int],
     desk_orientation_deg: float = 0.0,
     alignment_misalignment_threshold_deg: float = 15.0,
+    overlap_mode: str = "bbox",
 ) -> Dict[str, Any]:
     """
     Compute the tidy score and an explanation dictionary.
@@ -390,24 +652,66 @@ def tidy_score(
         workspace_penalty += WORKSPACE_PENALTY_IF_IN_WORKSPACE[cat]
 
     # 5.1) Object Overlap Penalty
-    # To avoid over-counting, we require both:
-    # - IoU > 0.30 (framework rule)
-    # - Intersection covers at least 50% of the smaller box
+    # Sensitive occlusion-oriented overlap rule:
+    # - Overlap is counted if IoU > 0.20 OR contain >= 0.35
+    #   where contain = intersection / min(area_a, area_b).
     # Also skip likely duplicate detections of the same object (same label + near containment).
     overlap_pairs = 0
     overlap_penalty = 0
-    for a, b in combinations(detections, 2):
-        iou = iou_xyxy(a.bbox, b.bbox)
-        inter = intersection_area_xyxy(a.bbox, b.bbox)
-        smaller = min(bbox_area_xyxy(a.bbox), bbox_area_xyxy(b.bbox))
-        contain = inter / smaller if smaller > 0 else 0.0
+    overlap_pairs_idx: List[Tuple[int, int]] = []
+    for i in range(len(detections)):
+        for j in range(i + 1, len(detections)):
+            a = detections[i]
+            b = detections[j]
+        if overlap_mode == "mask":
+            m = mask_overlap_metrics(a, b)
+            if m is None:
+                iou = iou_xyxy(a.bbox, b.bbox)
+                inter = intersection_area_xyxy(a.bbox, b.bbox)
+                smaller = min(bbox_area_xyxy(a.bbox), bbox_area_xyxy(b.bbox))
+                contain = inter / smaller if smaller > 0 else 0.0
+            else:
+                iou, contain = m
+        else:
+            iou = iou_xyxy(a.bbox, b.bbox)
+            inter = intersection_area_xyxy(a.bbox, b.bbox)
+            smaller = min(bbox_area_xyxy(a.bbox), bbox_area_xyxy(b.bbox))
+            contain = inter / smaller if smaller > 0 else 0.0
 
         # Same-label near-contained boxes are often duplicate predictions.
-        if a.label == b.label and contain >= 0.85:
+        # Keep this very strict to avoid dropping true overlaps among similar items.
+        if a.label == b.label and iou >= 0.85 and contain >= 0.95:
             continue
 
-        if iou > 0.3 and contain >= 0.5:
+        # Extra occlusion rule: elongated object partially lying on a larger surface
+        # (e.g. pen on book), even if center is outside.
+        a_area = bbox_area_xyxy(a.bbox)
+        b_area = bbox_area_xyxy(b.bbox)
+        elongated_on_surface = False
+        if a.label.strip().lower() in ANGLE_LINE_LABELS and a_area < b_area:
+            elongated_on_surface = (
+                elongated_overlap_ratio(a, b) >= 0.18
+                or elongated_axis_cover_ratio(a, b) >= 0.25
+            )
+        elif b.label.strip().lower() in ANGLE_LINE_LABELS and b_area < a_area:
+            elongated_on_surface = (
+                elongated_overlap_ratio(b, a) >= 0.18
+                or elongated_axis_cover_ratio(b, a) >= 0.25
+            )
+
+        a_is_line = a.label.strip().lower() in ANGLE_LINE_LABELS
+        b_is_line = b.label.strip().lower() in ANGLE_LINE_LABELS
+
+        # Parallel/adjacent pens often have tiny edge contact that should NOT count as overlap.
+        # For line-vs-line pairs, use stricter criteria.
+        if a_is_line and b_is_line:
+            is_overlap = (iou > 0.35) or (contain >= 0.55)
+        else:
+            is_overlap = (iou > 0.2) or (contain >= 0.35) or elongated_on_surface
+
+        if is_overlap:
             overlap_pairs += 1
+            overlap_pairs_idx.append((i, j))
     overlap_penalty = min(10, overlap_pairs * 2)
 
     # 5.2) Object Dispersion Penalty
@@ -470,6 +774,7 @@ def tidy_score(
             "reasons": reasons,
             "workspace_center_rect": (left, top, right, bottom),
             "dispersion_label": dispersion_label,
+            "overlap_pairs_idx": overlap_pairs_idx,
         },
     }
 
@@ -505,6 +810,18 @@ if __name__ == "__main__":
         "--estimate-object-angle",
         action="store_true",
         help="Estimate object angles from each ROI for alignment penalty.",
+    )
+    parser.add_argument(
+        "--overlap-mode",
+        type=str,
+        default="bbox",
+        choices=["bbox", "mask"],
+        help="Overlap estimation mode: bbox IoU or object mask overlap.",
+    )
+    parser.add_argument(
+        "--overlap-visualize",
+        action="store_true",
+        help="Save an image with overlap pairs highlighted.",
     )
     args = parser.parse_args()
 
@@ -587,6 +904,7 @@ if __name__ == "__main__":
                     float(xyxy[3]),
                 )
                 angle_deg = None
+                roi_mask = None
                 if args.estimate_object_angle and isinstance(orig_img, np.ndarray):
                     h_img, w_img = orig_img.shape[:2]
                     ix1 = max(0, min(w_img, int(round(x1))))
@@ -596,12 +914,22 @@ if __name__ == "__main__":
                     if ix2 > ix1 and iy2 > iy1:
                         roi = orig_img[iy1:iy2, ix1:ix2]
                         angle_deg = estimate_object_angle_deg(label, roi)
+                if args.overlap_mode == "mask" and isinstance(orig_img, np.ndarray):
+                    h_img, w_img = orig_img.shape[:2]
+                    ix1 = max(0, min(w_img, int(round(x1))))
+                    iy1 = max(0, min(h_img, int(round(y1))))
+                    ix2 = max(0, min(w_img, int(round(x2))))
+                    iy2 = max(0, min(h_img, int(round(y2))))
+                    if ix2 > ix1 and iy2 > iy1:
+                        roi = orig_img[iy1:iy2, ix1:ix2]
+                        roi_mask = estimate_foreground_mask(roi)
                 detections.append(
                     Detection(
                         label=label,
                         confidence=float(conf),
                         bbox=(x1, y1, x2, y2),
                         angle_deg=angle_deg,
+                        roi_mask=roi_mask,
                     )
                 )
 
@@ -612,8 +940,22 @@ if __name__ == "__main__":
             image_size=(w, h),
             desk_orientation_deg=float(args.desk_orientation),
             alignment_misalignment_threshold_deg=float(args.alignment_threshold),
+            overlap_mode=args.overlap_mode,
         )
         scores.append(res["tidy_score"])
+
+        if args.overlap_visualize and isinstance(orig_img, np.ndarray):
+            if args.save:
+                vis_dir = Path(str(args.save_project)) / str(args.save_name)
+            else:
+                vis_dir = Path.cwd() / "overlap_visualizations"
+            vis_name = f"{img_path.stem}_overlap_debug.jpg"
+            draw_overlap_visualization(
+                image_bgr=orig_img,
+                detections=detections,
+                overlap_pairs_idx=res["explanation"].get("overlap_pairs_idx", []),
+                out_path=vis_dir / vis_name,
+            )
 
         print(
             f"{img_path.name}: tidy_score={res['tidy_score']} "

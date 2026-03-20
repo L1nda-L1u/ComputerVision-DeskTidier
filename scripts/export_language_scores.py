@@ -36,7 +36,7 @@ def main() -> None:
             lines.append(f"\n## {fname}\n\n**ERROR:** file not found: `{path}`\n")
             continue
 
-        detections, orig_shape = rp.run_yolo(
+        detections, orig_shape, _ = rp.run_yolo(
             yolo,
             str(path),
             conf=0.4,
@@ -51,6 +51,7 @@ def main() -> None:
             image_size=(w, h),
             desk_orientation_deg=0.0,
             alignment_misalignment_threshold_deg=15.0,
+            overlap_mode="mask",
         )
         rec = generate_language_recommendations(detections, score_result)
 

@@ -7,12 +7,12 @@ Integrates all project components into a single end-to-end workflow:
   2. Custom YOLO (v4 YOLOv8m)      → detects desk objects
   3. Tidy Scoring System           → computes score + penalties
   4. Language Recommendations      → rule-based text suggestions
-  5. Visual Recommendations        → plan image + relayout image
+  5. Visual Recommendations        → plan / after / relayout + detection plot + before|after strip
 
-Usage:
-    python run_pipeline.py --image jpg_images/desk_065.jpg
-    python run_pipeline.py --image jpg_images/desk_065.jpg --skip-classifier
-    python run_pipeline.py --image jpg_images/ --conf 0.3
+Usage (from repository root):
+    python scripts/run_pipeline.py --image data/images/desk_065.jpg
+    python scripts/run_pipeline.py --image data/images/desk_065.jpg --skip-classifier
+    python scripts/run_pipeline.py --image data/images/ --conf 0.3
 """
 
 from __future__ import annotations
@@ -33,7 +33,9 @@ from ultralytics import YOLO
 
 # ──────────────────────── Path setup ──────────────────────────────────────────
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 SCORING_SCRIPT = PROJECT_ROOT / "scoring_module" / "scripts" / "Tidy Scoring System.py"
 CLASSIFIER_MODEL = PROJECT_ROOT / "classifier" / "desk_classifier.pth"
 YOLO_MODEL = (
@@ -151,10 +153,33 @@ def run_yolo(
                 angle_deg=angle_deg,
             ))
 
-    return detections, pred.orig_shape
+    return detections, pred.orig_shape, pred
 
 
 # ──────────────────────── Pipeline ────────────────────────────────────────────
+
+
+def _before_after_strip(
+    before_bgr,
+    after_bgr,
+    out_path: Path,
+    label_before: str = "Before (original)",
+    label_after: str = "After (suggested layout)",
+) -> None:
+    """Horizontal concat with same height; adds simple title bars."""
+    h = max(before_bgr.shape[0], after_bgr.shape[0])
+    scale_b = h / before_bgr.shape[0]
+    scale_a = h / after_bgr.shape[0]
+    b = cv2.resize(before_bgr, (int(before_bgr.shape[1] * scale_b), h))
+    a = cv2.resize(after_bgr, (int(after_bgr.shape[1] * scale_a), h))
+    bar_h = 36
+    canvas = np.zeros((h + bar_h, b.shape[1] + a.shape[1], 3), dtype=np.uint8)
+    canvas[:] = (40, 40, 40)
+    canvas[bar_h : bar_h + h, : b.shape[1]] = b
+    canvas[bar_h : bar_h + h, b.shape[1] :] = a
+    cv2.putText(canvas, label_before, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (240, 240, 240), 1, cv2.LINE_AA)
+    cv2.putText(canvas, label_after, (b.shape[1] + 8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (240, 240, 240), 1, cv2.LINE_AA)
+    cv2.imwrite(str(out_path), canvas)
 
 
 def process_image(
@@ -167,6 +192,8 @@ def process_image(
     imgsz: int = 640,
     yolo_device: str = "cpu",
     output_dir: Path | None = None,
+    overlap_mode: str = "mask",
+    left_handed_relayout: bool = False,
 ) -> Dict[str, Any]:
     """Run the full pipeline on one image. Returns a result dict."""
 
@@ -197,7 +224,7 @@ def process_image(
         print("Classifier: skipped")
 
     # ── Step 2: YOLO detection ──
-    detections, orig_shape = run_yolo(
+    detections, orig_shape, yolo_pred = run_yolo(
         yolo_model, str(image_path),
         conf=conf, iou=iou, imgsz=imgsz, device=yolo_device,
     )
@@ -217,6 +244,7 @@ def process_image(
         image_size=(w, h),
         desk_orientation_deg=0.0,
         alignment_misalignment_threshold_deg=15.0,
+        overlap_mode=overlap_mode,
     )
     result["tidy_score"] = score_result["tidy_score"]
     result["tidy_level"] = score_result["tidy_level"]
@@ -225,11 +253,16 @@ def process_image(
 
     print(f"\nTidy Score: {score_result['tidy_score']} ({score_result['tidy_level']})")
     print(f"Total Penalty: {score_result['total_penalty']}")
+    pen = score_result.get("penalties", {})
+    if pen:
+        print("Penalty breakdown (by type):")
+        for k in sorted(pen.keys()):
+            print(f"  - {k}: {pen[k]}")
     for reason in score_result["explanation"]["reasons"]:
         print(f"  - {reason}")
 
     # ── Step 4: Language recommendations ──
-    from desk_language_recommend import generate_language_recommendations
+    from desk_tidier.desk_language_recommend import generate_language_recommendations
 
     rec = generate_language_recommendations(detections, score_result)
     result["recommendations"] = rec
@@ -243,8 +276,8 @@ def process_image(
         print(f"  - {s}")
 
     # ── Step 5: Visual recommendations ──
-    from desk_recommend import make_default_zones, plan_actions, draw_plan_image, draw_after_image
-    from desk_relayout_viz import DeskRelayoutVisualizer
+    from desk_tidier.desk_recommend import make_default_zones, plan_actions, draw_plan_image, draw_after_image
+    from desk_tidier.desk_relayout_viz import DeskRelayoutVisualizer
 
     zones = make_default_zones(w, h)
     plans = plan_actions(detections, zones)
@@ -252,18 +285,32 @@ def process_image(
     plan_path = str(output_dir / f"{stem}_plan.png")
     after_path = str(output_dir / f"{stem}_after.png")
     relayout_path = str(output_dir / f"{stem}_relayout.png")
+    detection_path = str(output_dir / f"{stem}_detection.png")
+    before_after_path = str(output_dir / f"{stem}_before_after.png")
+
+    # YOLO detection visualization (boxes + class labels)
+    plot_img = yolo_pred.plot()
+    cv2.imwrite(detection_path, plot_img)
 
     draw_plan_image(str(image_path), plans, zones, plan_path)
     draw_after_image(str(image_path), plans, zones, after_path)
 
     # SAM masks are auto-computed inside the visualizer
     viz = DeskRelayoutVisualizer(str(image_path), detections)
-    viz.generate(relayout_path)
+    viz.generate(relayout_path, left_handed=left_handed_relayout)
+
+    # Before / after: original photo vs suggested relayout
+    orig_bgr = cv2.imread(str(image_path))
+    rel_bgr = cv2.imread(relayout_path)
+    if orig_bgr is not None and rel_bgr is not None:
+        _before_after_strip(orig_bgr, rel_bgr, Path(before_after_path))
 
     result["output_files"] = {
+        "detection": detection_path,
         "plan": plan_path,
         "after": after_path,
         "relayout": relayout_path,
+        "before_after": before_after_path,
     }
 
     print(f"\nOutput files:")
@@ -297,6 +344,18 @@ def main():
                         help="YOLO device (cpu or 0)")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory for generated images")
+    parser.add_argument(
+        "--overlap-mode",
+        type=str,
+        default="mask",
+        choices=("bbox", "mask"),
+        help="Overlap penalty: bbox IoU or foreground-mask-assisted (recommended: mask)",
+    )
+    parser.add_argument(
+        "--left-handed",
+        action="store_true",
+        help="Relayout zones for left-handed user (stationery right, temporary left)",
+    )
     args = parser.parse_args()
 
     # Load YOLO model
@@ -356,6 +415,8 @@ def main():
             imgsz=args.imgsz,
             yolo_device=args.device,
             output_dir=output_dir,
+            overlap_mode=args.overlap_mode,
+            left_handed_relayout=args.left_handed,
         )
         all_results.append(result)
 

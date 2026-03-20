@@ -8,7 +8,7 @@ Generates two output images after YOLO detection + tidy scoring:
 Reuses the Detection dataclass from "Tidy Scoring System.py".
 
 Usage (standalone):
-    python desk_recommend.py --image jpg_images/desk_065.jpg
+    python -m desk_tidier.desk_recommend --image data/images/desk_065.jpg
 
 Integration (in your pipeline):
     from desk_recommend import make_default_zones, plan_actions
@@ -35,7 +35,7 @@ try:
     import sys
     from pathlib import Path as _Path
 
-    _scoring_path = _Path(__file__).resolve().parent / "scoring_module" / "scripts" / "Tidy Scoring System.py"
+    _scoring_path = _Path(__file__).resolve().parents[1] / "scoring_module" / "scripts" / "Tidy Scoring System.py"
     _spec = importlib.util.spec_from_file_location("tidy_scoring_system", str(_scoring_path))
     if _spec is None or _spec.loader is None:
         raise RuntimeError("Failed to load scoring module")
