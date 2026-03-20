@@ -9,6 +9,8 @@ after tidying.  Objects are:
 
 Usage (standalone):
     python desk_relayout_viz.py --image jpg_images/desk_065.jpg
+    python desk_relayout_viz.py --image jpg_images/desk_065.jpg --left
+        # --left: left-handed layout (stationery right, temporary left, mouse bottom-left)
 
 Integration:
     from desk_relayout_viz import DeskRelayoutVisualizer
@@ -105,6 +107,20 @@ ZONE_RECTS: Dict[str, Tuple[int, int, int, int]] = {
 }
 
 MOUSE_AREA_RECT = (2090, 1590, 670, 500)
+
+
+def _mirror_rect_h(
+    x: int, y: int, w: int, h: int, canvas_w: int = CANVAS_W
+) -> Tuple[int, int, int, int]:
+    """Mirror a rect horizontally (left↔right) for left-handed desk layout."""
+    return (canvas_w - x - w, y, w, h)
+
+
+# Left-handed layout: stationery on the right, temporary on the left, mouse bottom-left of workspace row
+ZONE_RECTS_LEFT: Dict[str, Tuple[int, int, int, int]] = {
+    k: _mirror_rect_h(*v) for k, v in ZONE_RECTS.items()
+}
+MOUSE_AREA_RECT_LEFT = _mirror_rect_h(*MOUSE_AREA_RECT)
 
 
 # ──────────────────────── Item dataclass ──────────────────────────────────────
@@ -553,17 +569,20 @@ class DeskRelayoutVisualizer:
 
         return min(area_scale, dim_scale, 1.0)
 
-    def generate(self, out_path: str) -> str:
+    def generate(self, out_path: str, left_handed: bool = False) -> str:
+        zone_rects = ZONE_RECTS_LEFT if left_handed else ZONE_RECTS
+        mouse_rect = MOUSE_AREA_RECT_LEFT if left_handed else MOUSE_AREA_RECT
+
         canvas = np.full((CANVAS_H, CANVAS_W, 3), BG_COLOR[::-1], dtype=np.uint8)
 
         _put_text(canvas, "Reorganised Desk Layout", (50, 60),
                   color_rgb=(50, 50, 50), scale=1.6, thickness=3)
 
-        zone_items: Dict[str, List[_Item]] = {z: [] for z in ZONE_RECTS}
+        zone_items: Dict[str, List[_Item]] = {z: [] for z in zone_rects}
         for item in self.items:
             zone_items.setdefault(item.zone, []).append(item)
 
-        for zname, zrect in ZONE_RECTS.items():
+        for zname, zrect in zone_rects.items():
             fill = ZONE_COLORS_RGB.get(zname, (240, 240, 240))
             border = ZONE_BORDER_RGB.get(zname, (180, 180, 180))
             _draw_rounded_rect(canvas, zrect, fill, border, radius=24, alpha=0.45)
@@ -574,9 +593,9 @@ class DeskRelayoutVisualizer:
             _put_text(canvas, label_text, (zx + 18, zy + 36),
                       color_rgb=border, scale=0.85, thickness=2)
 
-        _draw_rounded_rect(canvas, MOUSE_AREA_RECT,
+        _draw_rounded_rect(canvas, mouse_rect,
                            (245, 245, 255), (150, 150, 200), radius=24, alpha=0.45)
-        mx, my, mw, mh = MOUSE_AREA_RECT
+        mx, my, mw, mh = mouse_rect
         ws_all = zone_items.get("workspace", [])
         mouse_n = sum(1 for i in ws_all if i.label == "mouse")
         _put_text(canvas, f"Mouse ({mouse_n})" if mouse_n else "Mouse",
@@ -602,14 +621,14 @@ class DeskRelayoutVisualizer:
 
         if other_workspace:
             placed, _ = _pack_items_no_overlap(
-                other_workspace, ZONE_RECTS["workspace"], global_scale,
+                other_workspace, zone_rects["workspace"], global_scale,
                 vertical_orientation=False, header_h=50, padding=24, gap=12)
             self._draw_placed(canvas, placed)
 
         stationery_items = zone_items.get("stationery", [])
         stationery_items.sort(key=_stationery_sort_key)
         placed_stat, overflow = _pack_items_no_overlap(
-            stationery_items, ZONE_RECTS["stationery"], global_scale,
+            stationery_items, zone_rects["stationery"], global_scale,
             vertical_orientation=True, header_h=50, padding=24, gap=12)
         self._draw_placed(canvas, placed_stat)
 
@@ -617,18 +636,18 @@ class DeskRelayoutVisualizer:
         ref_combined = ref_items + overflow
         if ref_combined:
             placed_ref, _ = _pack_items_no_overlap(
-                ref_combined, ZONE_RECTS["reference"], global_scale,
+                ref_combined, zone_rects["reference"], global_scale,
                 vertical_orientation=False, header_h=50, padding=24, gap=12)
             self._draw_placed(canvas, placed_ref)
 
         temp_items = zone_items.get("temporary", [])
         if temp_items:
             placed_tmp, temp_overflow = _pack_items_no_overlap(
-                temp_items, ZONE_RECTS["temporary"], global_scale,
+                temp_items, zone_rects["temporary"], global_scale,
                 vertical_orientation=False, header_h=50, padding=24, gap=12)
             self._draw_placed(canvas, placed_tmp)
             if temp_overflow:
-                tmp_rect = ZONE_RECTS["temporary"]
+                tmp_rect = zone_rects["temporary"]
                 ext_y = tmp_rect[1] + tmp_rect[3] + 10
                 ext_h = max(10, CANVAS_H - ext_y - 30)
                 ext_rect = (tmp_rect[0], ext_y, tmp_rect[2], ext_h)
@@ -639,7 +658,7 @@ class DeskRelayoutVisualizer:
 
         removed = zone_items.get("remove", [])
         if removed:
-            zrect = ZONE_RECTS["remove"]
+            zrect = zone_rects["remove"]
             zx, zy, zw, zh = zrect
             _put_text(canvas, "Items removed from desk:", (zx + 20, zy + 80),
                       color_rgb=(160, 120, 120), scale=0.7)
@@ -698,7 +717,12 @@ _DEFAULT_YOLO = str(Path(__file__).resolve().parent / "runs" / "detect" / "desk_
                      / "v4_yolov8m_roboflow_style" / "weights" / "best.pt")
 
 
-def run_standalone(image_path: str, model_path: str = _DEFAULT_YOLO, conf: float = 0.4):
+def run_standalone(
+    image_path: str,
+    model_path: str = _DEFAULT_YOLO,
+    conf: float = 0.4,
+    left_handed: bool = False,
+):
     from ultralytics import YOLO
     import importlib.util, sys
 
@@ -748,7 +772,8 @@ def run_standalone(image_path: str, model_path: str = _DEFAULT_YOLO, conf: float
     # SAM masks are computed automatically inside the visualizer
     viz = DeskRelayoutVisualizer(image_path, detections)
     stem = Path(image_path).stem
-    viz.generate(f"{stem}_relayout.png")
+    out_suffix = "_relayout_left.png" if left_handed else "_relayout.png"
+    viz.generate(f"{stem}{out_suffix}", left_handed=left_handed)
     print("(Used SAM2 for pixel-level segmentation)")
 
 
@@ -758,5 +783,10 @@ if __name__ == "__main__":
     parser.add_argument("--image", type=str, default="jpg_images/desk_065.jpg")
     parser.add_argument("--model", type=str, default=_DEFAULT_YOLO)
     parser.add_argument("--conf", type=float, default=0.4)
+    parser.add_argument(
+        "--left",
+        action="store_true",
+        help="Left-handed layout: stationery right, temporary left, mouse bottom-left",
+    )
     args = parser.parse_args()
-    run_standalone(args.image, args.model, args.conf)
+    run_standalone(args.image, args.model, args.conf, left_handed=args.left)
