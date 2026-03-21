@@ -16,6 +16,12 @@ Beyond the GitHub codebase, we also developed a demo web page to showcase real u
 
 ---
 
+## Demo
+
+**Web app:** [https://tidymydesk.com/](https://tidymydesk.com/) Walk through detection, scoring, and tidy suggestions in the browser.
+
+---
+
 ## Quick test (demo)
 
 Run from the **repository root** (requires trained weights at `runs/detect/desk_tidy_runs/v4_yolov8m_roboflow_style/weights/best.pt`):
@@ -170,6 +176,22 @@ We added a **ResNet18** binary classifier (tidy vs untidy) trained on labelled d
 **[FIGURE 9 — Placeholder]**  
 *Optional:* Screenshot of the **web demo** (handedness → upload → score → suggestions).  
 *Caption example:* “Web demo workflow (if submitted separately).”
+
+### Tidy up suggestions
+
+Our suggestion model is a **rule-based recommendation module** built on top of the object detection and tidy scoring pipeline.
+
+First, the system takes the detected desk objects and the tidy score result as input. Then it maps each detected object to a predefined action and target zone, such as **keep**, **move**, **route**, or **remove**. For example, laptops and mice are kept in the workspace, stationery items such as pens are moved to the stationery zone, cups and bottles are moved to a temporary item zone, and clutter items like packaging or trash are removed from the desk.
+
+After that, the model combines two levels of reasoning. At the **global** level, it reads the penalties from the tidy scoring system, such as workspace obstruction, too many objects, overlap, dispersion, and misalignment, and converts them into high-level explanations like “the workspace is obstructed” or “objects are scattered.” Then it generates strategic suggestions such as clearing the central workspace first, regrouping items into functional zones, or aligning objects with the desk edges. At the **object** level, it groups detected items by action and destination, so instead of producing many repetitive sentences, it outputs compact recommendations such as “Move to stationery zone: pen, pencil, marker.” This makes the output more structured, interpretable, and easy for users to follow.
+
+The visual relayout module (SAM-based cutouts placed into labelled zones) turns the same logic into an **“after” desk diagram**. Below, **desk_066** compares the **original photograph** with the **reorganised layout** suggestion.
+
+| Original photograph (`data/images/desk_066.jpg`) | Reorganised layout suggestion (`outputs/relayout_examples/desk_066_relayout.png`) |
+| :-----------------------------------------------: | :---------------------------------------------------------------------------------: |
+| ![Original desk photo — desk_066](data/images/desk_066.jpg) | ![Reorganised desk layout — desk_066](outputs/relayout_examples/desk_066_relayout.png) |
+
+*Figure 3 — Example **desk_066**: messy desk photo (left) vs rule-based zone relayout with grouped actions (right).*
 
 ### Deliverables checklist
 
