@@ -9,7 +9,7 @@ We built a vision-based desktop tidiness decision system that combines object de
 
 ## What We Achieved
 
-Beyond the GitHub codebase, we also developed a demo web page to showcase real user interaction: users first choose their dominant hand (left or right), then upload a desk photo, after which the system detects desk objects, decides whether tidying is needed and how messy the desk is (with a scoring table), and finally generates both visual and text-based organizing plans (image + language guidance). Together, these components form a practical decision-support tool for personalized desk organization.
+Beyond the GitHub codebase, we also developed a demo web page to showcase real user interaction: users first choose their dominant hand (left or right), then upload a desk photo, after which the system detects desk objects, decides whether tidying is needed and how messy the desk is (with a scoring table), and finally generates both visual and text-based organizing plans (image + language guidance). Together, these components form a practical decision-support tool for personalized desk organization. The same perception and planning stack can also support teaching a robot to tidy a human desk (what to move where, and in what order), not only human-facing advice in a browser.
 
 
 ## Demo
@@ -127,7 +127,7 @@ These values reflect detection reliability rather than tidiness itself, but indi
 
 ![YOLO v3 vs v4 test evaluation comparison (PR, F1, normalized confusion matrix)](docs/figures/yolo_v3_v4_test_comparison.png)
 
-*Figure 1 — Detection and post-processing comparison between **Model v3** and **Model v4** on test evaluation outputs (PR curve, F1-confidence curve, and normalized confusion matrix).*
+*Figure 1. Detection and post-processing comparison between **Model v3** and **Model v4** on test evaluation outputs (PR curve, F1-confidence curve, and normalized confusion matrix).*
 
 Before using detections for scoring, we tuned post-processing parameters to obtain stable object counts. Default thresholds often resulted in either missed objects or duplicate detections.
 
@@ -135,7 +135,7 @@ We converged toward settings such as confidence ≈ 0.4, NMS IoU ≈ 0.5, and in
 
 ![Side-by-side inference: Model v3 (left) vs Model v4 (right) on the same desk scenes](docs/figures/yolo_v3_v4_detection_visual_comparison.png)
 
-*Figure 2 — Qualitative detection comparison on held-out desk images: **Model v4** recovers more small and cluttered objects (e.g. pens, markers, cables) than **Model v3** on the same inputs, illustrating the impact of detector iteration before downstream tidy scoring.*
+*Figure 2. Qualitative detection comparison on held-out desk images: **Model v4** recovers more small and cluttered objects (e.g. pens, markers, cables) than **Model v3** on the same inputs, illustrating the impact of detector iteration before downstream tidy scoring.*
 
 ### Classifier
 
@@ -143,13 +143,13 @@ We developed a binary image classifier to determine whether a desk is tidy or un
 
 The classifier achieved strong performance, correctly classifying 138 out of 139 images. As shown in **Figure 3**, the model converges quickly with low training loss and stable validation accuracy, and performs well across both classes according to the confusion matrix and per-class metrics. **Figure 4** presents sample predictions on random desk images, demonstrating that the classifier generalises well across different desk layouts and clutter conditions.
 
-![ResNet18 desk classifier — training loss, validation accuracy, confusion matrix, and per-class metrics](docs/figures/resnet18_classifier_training_results.png)
+![ResNet18 desk classifier: training loss, validation accuracy, confusion matrix, and per-class metrics](docs/figures/resnet18_classifier_training_results.png)
 
-*Figure 3 — ResNet18 desk classifier training results: loss and validation accuracy over epochs, confusion matrix on all 139 held-out images, and per-class precision/recall/F1.*
+*Figure 3. ResNet18 desk classifier training results: loss and validation accuracy over epochs, confusion matrix on all 139 held-out images, and per-class precision/recall/F1.*
 
 ![Sample classifier predictions on random desk images](docs/figures/resnet18_classifier_sample_predictions.png)
 
-*Figure 4 — Sample predictions on random desk images (ground truth vs predicted label and confidence).*
+*Figure 4. Sample predictions on random desk images (ground truth vs predicted label and confidence).*
 
 ### Tidy Scoring
 
@@ -165,7 +165,7 @@ The tidy score is computed as an aggregation of penalties reflecting object quan
 
 ![Overlap pair detection for spatial disorder: example desks with counted overlap pairs and highlighted pairs (o1, o2)](docs/figures/tidy_scoring_overlap_pairs_visualization.png)
 
-*Figure 5 — **Spatial disorder (overlap):** examples of detected **overlap pairs** used to compute the overlap penalty (red pairs / yellow connectors; grey boxes are non-overlap detections). Pair counts vary by scene (e.g. pen–pencil, pen-on-book, packaging with adjacent items).*
+*Figure 5. **Spatial disorder (overlap):** examples of detected **overlap pairs** used to compute the overlap penalty (red pairs / yellow connectors; grey boxes are non-overlap detections). Pair counts vary by scene (e.g. pen and pencil, pen on book, packaging with adjacent items).*
 
 **Alignment** penalises orientation deviation from the assumed desk direction (0°). Rectangular objects use OpenCV `minAreaRect`, while elongated objects use `HoughLinesP`. This component was introduced after observing that some desks appeared visually untidy despite low penalties in other dimensions.
 
@@ -183,17 +183,17 @@ The visual relayout module (SAM-based cutouts placed into labelled zones) turns 
 
 | Original photograph (`data/images/desk_066.jpg`) | Reorganised layout suggestion (`outputs/relayout_examples/desk_066_relayout.png`) |
 | :-----------------------------------------------: | :---------------------------------------------------------------------------------: |
-| ![Original desk photo — desk_066](data/images/desk_066.jpg) | ![Reorganised desk layout — desk_066](outputs/relayout_examples/desk_066_relayout.png) |
+| ![Original desk photo (desk_066)](data/images/desk_066.jpg) | ![Reorganised desk layout (desk_066)](outputs/relayout_examples/desk_066_relayout.png) |
 
-*Figure 6 — Example **desk_066**: messy desk photo (left) vs rule-based zone relayout with grouped actions (right).*
+*Figure 6. Example **desk_066**: messy desk photo (left) vs rule-based zone relayout with grouped actions (right).*
 
 ### Web demo (TidyMyDesk)
 
 The public demo at **[tidymydesk.com](https://tidymydesk.com/)** wraps the same pipeline in a browser UI: preferences (e.g. handedness), upload, scoring, and a **Plan** view with reorganised zone layout, grouped actions (keep / move / remove), tidy score, reasons, and suggestions.
 
-![TidyMyDesk web app — Plan page with optimised layout, grouped actions, and tidy score sidebar](docs/figures/web_demo_tidymydesk_plan.png)
+![TidyMyDesk web app, Plan page with optimised layout, grouped actions, and tidy score sidebar](docs/figures/web_demo_tidymydesk_plan.png)
 
-*Figure 7 — **Web demo (TidyMyDesk):** PLAN screen showing zone-based “after” layout, grouped recommendations, and score + reasons + suggestions (example: desk_066-style result).*
+*Figure 7. **Web demo (TidyMyDesk):** PLAN screen showing zone-based “after” layout, grouped recommendations, and score + reasons + suggestions (example: desk_066-style result).*
 
 ### Deliverables checklist
 
@@ -209,7 +209,7 @@ The public demo at **[tidymydesk.com](https://tidymydesk.com/)** wraps the same 
 
 ## Evaluation
 
-The application is designed as a vision-based desk tidiness assistant that generates a structured evaluation from a single image. It uses a custom-trained YOLO detector to identify common desk objects and applies a transparent rule-based scoring model to convert detections into a 0–100 tidiness score, a qualitative label, and actionable suggestions. In addition, a lightweight binary classifier is used to determine whether the scene is already tidy, allowing the system to skip deeper analysis when appropriate. This end-to-end pipeline—detection, scoring, explanation, and recommendation—makes the system function as a simple decision-support tool rather than just a detector.
+The application is designed as a vision-based desk tidiness assistant that generates a structured evaluation from a single image. It uses a custom-trained YOLO detector to identify common desk objects and applies a transparent rule-based scoring model to convert detections into a 0 to 100 tidiness score, a qualitative label, and actionable suggestions. In addition, a lightweight binary classifier is used to determine whether the scene is already tidy, allowing the system to skip deeper analysis when appropriate. This end-to-end pipeline (detection, scoring, explanation, and recommendation) makes the system function as a simple decision-support tool rather than just a detector.
 
 A key strength of the system is that it operationalises the abstract concept of “clutter” in a structured way. The score combines several dimensions, including object count, semantic categories (core items vs. temporary items), spatial risk (whether objects occupy the central work area), geometric clutter (overlap and dispersion), and approximate alignment of elongated objects. The system also produces rich and interpretable outputs, such as annotated detection images, penalty breakdowns explaining score reductions, grouped action suggestions, and visualised “after” layouts. These outputs help users understand why a score is assigned and how to improve their workspace.
 
@@ -218,7 +218,7 @@ However, the system has several limitations. First, its performance depends heav
 Overall, this system is best understood as an interpretable prototype rather than a complete solution. It demonstrates how visual detection can be combined with rule-based reasoning to provide structured feedback and actionable suggestions. At the same time, it highlights the trade-offs involved in automating subjective concepts such as tidiness, and the continued importance of human judgement in understanding context and personal needs.
 
 
-## Personal Statement -- Yiwen Cao
+## Personal Statement: Yiwen Cao
 
 I collaborated with Linda to develop the initial concept of this project. She was designing a robot called MicroTidy, and we positioned our system as its “eyes and brain”, responsible for perception and decision-making. 
 
@@ -235,7 +235,7 @@ Through this project, I not only developed technical skills in computer vision a
 The current system still has limitations, including relatively simple layout rules that only consider left- and right-handed preferences in a basic way, and the lack of safety-aware logic, such as detecting risky placements like a cup positioned too close to a laptop. If given more time, I would like to develop a more personalised strategy system and explore the use of large language models to generate more natural, context-sensitive recommendations.
 
 
-## Personal Statement - Linda
+## Personal Statement: Linda
 
 I worked closely with Yiwen to design the initial idea about the project. As I'm thinking design a MicroTidy robot, we decided to position this system as the “eyes and brain” of the robot, responsible for perception and decision making.
 
