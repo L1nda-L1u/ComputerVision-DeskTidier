@@ -109,6 +109,20 @@ System architecture and data flow：Dataset → Train YOLO → Infer → TidySco
 
 We used a YOLO-format desk dataset (imported from Roboflow-style exports), with train/validation splits and class names aligned to items we care about on a desk: laptops, books, pens, mugs, cables, and so on. These raw labels are later **mapped** in software to higher-level **categories** used only for scoring—Core work items, study items, temporary items, and clutter—so that the same detector can support both “what object is this?” and “how much does this kind of object contribute to mess?”.
 
+### Classifier
+
+We developed a binary image classifier to determine whether a desk is tidy or untidy, which serves as the first decision stage of our system. The goal is to quickly identify whether tidying is needed before applying more detailed scoring and suggestion modules. We used a fine tuned ResNet18 model with transfer learning, trained on a dataset that we collected ourselves due to the lack of suitable existing datasets. The model learns global visual features such as object density, clutter distribution, and workspace obstruction to make the classification.
+
+The classifier achieved strong performance, correctly classifying 138 out of 139 images. As shown in **Figure 1**, the model converges quickly with low training loss and stable validation accuracy, and performs well across both classes according to the confusion matrix and per-class metrics. **Figure 2** presents sample predictions on random desk images, demonstrating that the classifier generalises well across different desk layouts and clutter conditions.
+
+![ResNet18 desk classifier — training loss, validation accuracy, confusion matrix, and per-class metrics](docs/figures/resnet18_classifier_training_results.png)
+
+*Figure 1 — ResNet18 desk classifier training results: loss and validation accuracy over epochs, confusion matrix on all 139 held-out images, and per-class precision/recall/F1.*
+
+![Sample classifier predictions on random desk images](docs/figures/resnet18_classifier_sample_predictions.png)
+
+*Figure 2 — Sample predictions on random desk images (ground truth vs predicted label and confidence).*
+
 We trained a **YOLOv8m** detector; the best weights are stored under `runs/detect/desk_tidy_runs/v4_yolov8m_roboflow_style/weights/best.pt`. On the **validation split at the end of training** (final epoch in `results.csv`), indicative box metrics are approximately:
 
 
