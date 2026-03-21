@@ -4,12 +4,12 @@ Desktop organization project using computer vision.
 
 ## Description
 
-We built a vision-based desktop tidiness decision system that combines object detection, scoring, and actionable cleanup guidance. In this repository, we implemented an end-to-end pipeline with a YOLO-based desk object detector, a rule-based tidy scoring framework (object load, category mix, central workspace obstruction, overlap, and alignment), batch CSV export for evaluation, and recommendation modules that translate detections into clear, grouped cleanup actions.
+We built a desktop tidiness system using computer vision that combines object detection, scoring, and actionable cleanup guidance. In this repository, we implemented a full pipeline with a custom YOLO detector for desk objects, tidy scoring with explicit rules (object load, category mix, central workspace obstruction, overlap, and alignment), batch CSV export for evaluation, and recommendation modules that translate detections into clear, grouped cleanup actions.
 
 
 ## What We Achieved
 
-Beyond the GitHub codebase, we also developed a demo web page to showcase real user interaction: users first choose their dominant hand (left or right), then upload a desk photo, after which the system detects desk objects, decides whether tidying is needed and how messy the desk is (with a scoring table), and finally generates both visual and text-based organizing plans (image + language guidance). Together, these components form a practical decision-support tool for personalized desk organization. The same perception and planning stack can also support teaching a robot to tidy a human desk (what to move where, and in what order), not only human-facing advice in a browser.
+Beyond the GitHub codebase, we also developed a demo web page to showcase real user interaction: users first choose their dominant hand (left or right), then upload a desk photo, after which the system detects desk objects, decides whether tidying is needed and how messy the desk is (with a scoring table), and finally generates both visual plans and text guidance (image + language). Together, these components form a practical tool to support decisions about desk organization. The same perception and planning stack can also support teaching a robot to tidy a human desk (what to move where, and in what order), not only advice shown to people in a browser.
 
 
 ## Demo
@@ -103,7 +103,7 @@ After image saved: C:\Users\Documents\GitHub\ComputerVision\teacher_demo\desk_06
 
 ## Evidence
 
-The system aims to quantify desk tidiness by combining object detection with rule-based reasoning. It is implemented as a linear pipeline with optional branches, and each stage produces intermediate outputs (e.g., detection overlays, score CSVs, and relayout images) that can be inspected independently.
+The system aims to quantify desk tidiness by combining object detection with explicit interpretable rules. It is implemented as a linear pipeline with optional branches, and each stage produces intermediate outputs (e.g., detection overlays, score CSVs, and relayout images) that can be inspected independently.
 
 The overall workflow follows:
 Dataset → Train YOLO → Infer → TidyScore → Language → Visual outputs
@@ -112,7 +112,7 @@ The modules were implemented incrementally. Detection results were first validat
 
 ### Detection and post-processing
 
-We used a YOLO-format desk dataset imported from Roboflow-style exports, with train/validation splits and class names aligned to desk-relevant objects such as laptops, books, pens, mugs, and cables. These raw labels are later mapped in software to higher-level semantic categories used for interpretation.
+We used a desk dataset in YOLO format (exported from Roboflow), with train/validation splits and class names aligned to desk-relevant objects such as laptops, books, pens, mugs, and cables. These raw labels are later mapped in software to higher-level semantic categories used for interpretation.
 
 We trained a **YOLOv8m** detector, with the best weights stored under `runs/detect/desk_tidy_runs/v4_yolov8m_roboflow_style/weights/best.pt`. On the validation split at the end of training, using the final epoch recorded in `results.csv`, the detector achieved approximately the following box metrics:
 
@@ -127,7 +127,7 @@ These values reflect detection reliability rather than tidiness itself, but indi
 
 ![YOLO v3 vs v4 test evaluation comparison (PR, F1, normalized confusion matrix)](docs/figures/yolo_v3_v4_test_comparison.png)
 
-*Figure 1. Detection and post-processing comparison between **Model v3** and **Model v4** on test evaluation outputs (PR curve, F1-confidence curve, and normalized confusion matrix).*
+*Figure 1. Detection and post-processing comparison between **Model v3** and **Model v4** on test evaluation outputs (PR curve, F1 vs confidence curve, and normalized confusion matrix).*
 
 Before using detections for scoring, we tuned post-processing parameters to obtain stable object counts. Default thresholds often resulted in either missed objects or duplicate detections.
 
@@ -161,7 +161,7 @@ The tidy score is computed as an aggregation of penalties reflecting object quan
 
 **Workspace obstruction** uses a central rectangle covering 60% of the image area. Objects whose bounding box centres fall inside this region are considered to obstruct the workspace. This mechanism was refined from per-object penalties to per-category accumulation, to avoid over-penalising repeated instances of the same object type.
 
-**Spatial disorder** includes dispersion and overlap. Dispersion measures how widely objects are spread across the desk. Overlap was initially based on bounding-box IoU and containment, but this failed in cases where objects appeared visually overlapping without sufficient box intersection. To address this, we introduced mask-assisted overlap and additional heuristics for elongated objects such as pens on books, using overlap ratios and principal-axis coverage. This also reduced false positives for adjacent similar objects such as two pens placed side by side.
+**Spatial disorder** includes dispersion and overlap. Dispersion measures how widely objects are spread across the desk. Overlap initially used only bounding-box IoU and containment, but this failed in cases where objects appeared visually overlapping without sufficient box intersection. To address this, we added overlap using segmentation masks and additional heuristics for elongated objects such as pens on books, using overlap ratios and principal-axis coverage. This also reduced false positives for adjacent similar objects such as two pens placed side by side.
 
 ![Overlap pair detection for spatial disorder: example desks with counted overlap pairs and highlighted pairs (o1, o2)](docs/figures/tidy_scoring_overlap_pairs_visualization.png)
 
@@ -169,23 +169,23 @@ The tidy score is computed as an aggregation of penalties reflecting object quan
 
 **Alignment** penalises orientation deviation from the assumed desk direction (0°). Rectangular objects use OpenCV `minAreaRect`, while elongated objects use `HoughLinesP`. This component was introduced after observing that some desks appeared visually untidy despite low penalties in other dimensions.
 
-Several refinements were directly driven by failure cases. For example, cases where multiple apparent overlaps still produced zero IoU-based penalty led to the introduction of mask-based overlap. Cases involving adjacent pens or pen-on-book configurations led to more specific interaction rules for elongated objects. Workspace scoring was also adjusted after early versions produced overly harsh or overly lenient results depending on region definition. Each change was validated again on a small set of test images.
+Several refinements were directly driven by failure cases. For example, cases where multiple apparent overlaps still produced zero penalty when using IoU alone led to overlap measured with foreground masks. Cases involving adjacent pens or pen-on-book configurations led to more specific interaction rules for elongated objects. Workspace scoring was also adjusted after early versions produced overly harsh or overly lenient results depending on region definition. Each change was validated again on a small set of test images.
 
 ### Tidy up suggestions
 
-Our suggestion model is a **rule-based recommendation module** built on top of the object detection and tidy scoring pipeline.
+Our suggestion model is a **recommendation module built from explicit rules**, on top of the object detection and tidy scoring pipeline.
 
 First, the system takes the detected desk objects and the tidy score result as input. Then it maps each detected object to a predefined action and target zone, such as **keep**, **move**, **route**, or **remove**. For example, laptops and mice are kept in the workspace, stationery items such as pens are moved to the stationery zone, cups and bottles are moved to a temporary item zone, and clutter items like packaging or trash are removed from the desk.
 
 After that, the model combines two levels of reasoning. At the **global** level, it reads the penalties from the tidy scoring system, such as workspace obstruction, too many objects, overlap, dispersion, and misalignment, and converts them into high-level explanations like “the workspace is obstructed” or “objects are scattered.” Then it generates strategic suggestions such as clearing the central workspace first, regrouping items into functional zones, or aligning objects with the desk edges. At the **object** level, it groups detected items by action and destination, so instead of producing many repetitive sentences, it outputs compact recommendations such as “Move to stationery zone: pen, pencil, marker.” This makes the output more structured, interpretable, and easy for users to follow.
 
-The visual relayout module (SAM-based cutouts placed into labelled zones) turns the same logic into an **“after” desk diagram**. Below, **desk_066** compares the **original photograph** with the **reorganised layout** suggestion.
+The visual relayout module (object cutouts from SAM segmentation, placed into labelled zones) turns the same logic into an **“after” desk diagram**. Below, **desk_066** compares the **original photograph** with the **reorganised layout** suggestion.
 
 | Original photograph (`data/images/desk_066.jpg`) | Reorganised layout suggestion (`outputs/relayout_examples/desk_066_relayout.png`) |
 | :-----------------------------------------------: | :---------------------------------------------------------------------------------: |
 | ![Original desk photo (desk_066)](data/images/desk_066.jpg) | ![Reorganised desk layout (desk_066)](outputs/relayout_examples/desk_066_relayout.png) |
 
-*Figure 6. Example **desk_066**: messy desk photo (left) vs rule-based zone relayout with grouped actions (right).*
+*Figure 6. Example **desk_066**: messy desk photo (left) vs zone relayout from rules with grouped actions (right).*
 
 ### Web demo (TidyMyDesk)
 
@@ -193,7 +193,7 @@ The public demo at **[tidymydesk.com](https://tidymydesk.com/)** wraps the same 
 
 ![TidyMyDesk web app, Plan page with optimised layout, grouped actions, and tidy score sidebar](docs/figures/web_demo_tidymydesk_plan.png)
 
-*Figure 7. **Web demo (TidyMyDesk):** PLAN screen showing zone-based “after” layout, grouped recommendations, and score + reasons + suggestions (example: desk_066-style result).*
+*Figure 7. **Web demo (TidyMyDesk):** PLAN screen showing an “after” layout by functional zones, grouped recommendations, and score + reasons + suggestions (example similar to **desk_066**).*
 
 ### Deliverables checklist
 
@@ -209,13 +209,13 @@ The public demo at **[tidymydesk.com](https://tidymydesk.com/)** wraps the same 
 
 ## Evaluation
 
-The application is designed as a vision-based desk tidiness assistant that generates a structured evaluation from a single image. It uses a custom-trained YOLO detector to identify common desk objects and applies a transparent rule-based scoring model to convert detections into a 0 to 100 tidiness score, a qualitative label, and actionable suggestions. In addition, a lightweight binary classifier is used to determine whether the scene is already tidy, allowing the system to skip deeper analysis when appropriate. This end-to-end pipeline (detection, scoring, explanation, and recommendation) makes the system function as a simple decision-support tool rather than just a detector.
+The application works as a desk tidiness assistant from a single image: it uses a YOLO detector trained on our desk data to identify common desk objects and a transparent scoring model with interpretable rules to convert detections into a 0 to 100 tidiness score, a qualitative label, and actionable suggestions. In addition, a lightweight binary classifier is used to determine whether the scene is already tidy, allowing the system to skip deeper analysis when appropriate. The full pipeline (detection, scoring, explanation, and recommendation) makes the system a simple decision support tool rather than just a detector.
 
 A key strength of the system is that it operationalises the abstract concept of “clutter” in a structured way. The score combines several dimensions, including object count, semantic categories (core items vs. temporary items), spatial risk (whether objects occupy the central work area), geometric clutter (overlap and dispersion), and approximate alignment of elongated objects. The system also produces rich and interpretable outputs, such as annotated detection images, penalty breakdowns explaining score reductions, grouped action suggestions, and visualised “after” layouts. These outputs help users understand why a score is assigned and how to improve their workspace.
 
 However, the system has several limitations. First, its performance depends heavily on the accuracy of the object detector. Missed detections or incorrect labels can directly affect the score. Second, the scoring system is based on predefined rules, which reflect design assumptions and may not generalise across different cultures, desk sizes, or personal work styles. Third, object overlap and segmentation are only approximated, making it difficult to handle cases such as transparent objects, heavy occlusion, or unseen categories. Fourth, orientation estimation is relatively coarse and may be unreliable for irregular shapes or complex backgrounds. Fifth, the generated layouts are only illustrative suggestions and do not consider physical constraints such as gravity, cable length, ergonomics, or user habits. Finally, the binary “tidy vs. cluttered” judgement is based on a simple classifier and should not be interpreted as an objective measure of productivity or organisation.
 
-Overall, this system is best understood as an interpretable prototype rather than a complete solution. It demonstrates how visual detection can be combined with rule-based reasoning to provide structured feedback and actionable suggestions. At the same time, it highlights the trade-offs involved in automating subjective concepts such as tidiness, and the continued importance of human judgement in understanding context and personal needs.
+Overall, this system is best understood as an interpretable prototype rather than a complete solution. It demonstrates how visual detection can be combined with explicit rules to provide structured feedback and actionable suggestions. At the same time, it highlights the tradeoffs involved in automating subjective concepts such as tidiness, and the continued importance of human judgement in understanding context and personal needs.
 
 
 ## Personal Statement: Yiwen Cao
@@ -224,13 +224,13 @@ I collaborated with Linda to develop the initial concept of this project. She wa
 
 As my first attempt at building a computer vision pipeline from scratch, I chose to construct the dataset myself rather than rely on existing ones, as they did not fully match our context. We collected around 150 desk images and jointly annotated them, with me defining 20 object categories and annotating 26 images. I then trained a YOLOv8 model to detect common desk objects such as pens, books, cups, and cables. After four rounds of iteration, the model achieved Precision 0.783, Recall 0.816, and [mAP@0.5](mailto:mAP@0.5) of 0.851.
 
-After the detection stage, I developed the Tidy Score module, which evaluated desk organisation across Object Load, Category, Workspace Obstruction, Spatial Disorder, and Alignment. During this process, I realised that some aspects of tidiness are difficult to capture through rule-based methods alone. In particular, Spatial Disorder and Alignment were the most challenging. For overlap detection in Spatial Disorder, I refined the method from basic bounding box IoU and containment rules to a mask-assisted approach, which reduced cases where large bounding boxes were mistaken for real overlap. I also introduced additional rules for elongated objects on flat surfaces, such as pens placed on books, using axis coverage and area proportion to reduce false positives and improve detection accuracy. For Alignment, I used different visual methods for different object categories: rectangular objects such as laptops, books, notebooks, phones, and sticky notes were analysed using OpenCV’s minAreaRect, while elongated objects such as pens, pencils, markers, and scissors were analysed using HoughLinesP. Irregular objects such as mugs and cables were excluded from angle estimation. Even with these refinements, I believe both modules still have room for improvement.
+After the detection stage, I developed the Tidy Score module, which evaluated desk organisation across Object Load, Category, Workspace Obstruction, Spatial Disorder, and Alignment. During this process, I realised that some aspects of tidiness are difficult to capture with explicit rules alone. In particular, Spatial Disorder and Alignment were the most challenging. For overlap detection in Spatial Disorder, I refined the method from basic bounding box IoU and containment rules to an approach using segmentation masks, which reduced cases where large bounding boxes were mistaken for real overlap. I also introduced additional rules for elongated objects on flat surfaces, such as pens placed on books, using axis coverage and area proportion to reduce false positives and improve detection accuracy. For Alignment, I used different visual methods for different object categories: rectangular objects such as laptops, books, notebooks, phones, and sticky notes were analysed using OpenCV’s minAreaRect, while elongated objects such as pens, pencils, markers, and scissors were analysed using HoughLinesP. Irregular objects such as mugs and cables were excluded from angle estimation. Even with these refinements, I believe both modules still have room for improvement.
 
 One important limitation I identified was that some implicit human judgements of tidiness, such as subtle visual alignment between a cup and the edge of a laptop, are difficult to detect reliably with hand-crafted rules and may be better addressed through machine learning. To improve the overall system, we adopted a modular two-stage strategy: a binary classifier developed by Linda first determines whether the desk needs tidying, and only if tidying is needed does the system proceed to detailed scoring. This made the system more robust and interpretable. 
 
-I also worked on the text-based recommendation component, producing concise and practical tidying suggestions, and collaborated with Linda on a simple demo website, where I built the overall framework and she focused on visual refinement and interface details.
+I also worked on text recommendations, producing concise and practical tidying suggestions, and collaborated with Linda on a simple demo website, where I built the overall framework and she focused on visual refinement and interface details.
 
-Through this project, I not only developed technical skills in computer vision and system building, but also gained a stronger understanding of how to design an interpretable and extensible system. One key lesson was that modularising detection, classification, scoring, and recommendation made the system easier to explain, test, and improve. At the same time, the project showed me the limitations of purely rule-based approaches in capturing human perceptions of order. 
+Through this project, I not only developed technical skills in computer vision and system building, but also gained a stronger understanding of how to design an interpretable and extensible system. One key lesson was that modularising detection, classification, scoring, and recommendation made the system easier to explain, test, and improve. At the same time, the project showed me the limitations of handwritten rules alone in capturing human perceptions of order. 
 
 The current system still has limitations, including relatively simple layout rules that only consider left- and right-handed preferences in a basic way, and the lack of safety-aware logic, such as detecting risky placements like a cup positioned too close to a laptop. If given more time, I would like to develop a more personalised strategy system and explore the use of large language models to generate more natural, context-sensitive recommendations.
 
@@ -239,7 +239,7 @@ The current system still has limitations, including relatively simple layout rul
 
 I worked closely with Yiwen to design the initial idea about the project. As I'm thinking design a MicroTidy robot, we decided to position this system as the “eyes and brain” of the robot, responsible for perception and decision making.
 
-This project was my first time building a computer vision pipeline from zero. One of the first challenges we faced was the lack of a suitable dataset. We collected our own desk data by photographing and constructed a dataset of around 150 images. Initially, I experimented with pretrained ImageNet models and COCO-based YOLO detection, but the performance was poor because those models were not tailored to desk-level object understanding. To address this, we worked on dataset annotation and I labeled 27 images myself, defining 20 object categories. This step was important because it allowed the model to learn meaningful desk-related semantics rather than generic object classes. After training, the detection performance improved significantly from 4% to 93%.
+This project was my first time building a computer vision pipeline from zero. One of the first challenges we faced was the lack of a suitable dataset. We collected our own desk data by photographing and constructed a dataset of around 150 images. Initially, I experimented with pretrained ImageNet models and YOLO detectors pretrained on COCO, but the performance was poor because those models were not tailored to desk-level object understanding. To address this, we worked on dataset annotation and I labeled 27 images myself, defining 20 object categories. This step was important because it allowed the model to learn meaningful desk-related semantics rather than generic object classes. After training, the detection performance improved significantly from 4% to 93%.
 
 I then focused on building a binary classifier to determine whether a desk requires tidying. The classifier achieved very high accuracy, correctly classifying 138 out of 139 images. The only misclassified case was also ambiguous even for human judgement, which suggests that the model has learned a reasonable decision boundary. In our system, if the classifier outputs “tidy”, no further action is taken. If it outputs “untidy”, the image is passed to Yiwen’s scoring model for detailed analysis.
 
