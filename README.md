@@ -2,13 +2,19 @@
 
 Desktop organization project using computer vision.
 
+---
+
 ## Description
 
 We built a vision-based desktop tidiness decision system that combines object detection, scoring, and actionable cleanup guidance. In this repository, we implemented an end-to-end pipeline with a YOLO-based desk object detector, a rule-based tidy scoring framework (object load, category mix, central workspace obstruction, overlap, and alignment), batch CSV export for evaluation, and recommendation modules that translate detections into clear, grouped cleanup actions.
 
+---
+
 ## What We Achieved
 
 Beyond the GitHub codebase, we also developed a demo web page to showcase real user interaction: users first choose their dominant hand (left or right), then upload a desk photo, after which the system detects desk objects, decides whether tidying is needed and how messy the desk is (with a scoring table), and finally generates both visual and text-based organizing plans (image + language guidance). Together, these components form a practical decision-support tool for personalized desk organization.
+
+---
 
 ## Quick test (demo)
 
@@ -93,70 +99,76 @@ python scripts/teacher_demo.py data/images/desk_066.jpg
 Plan image saved: C:\Users\Documents\GitHub\ComputerVision\teacher_demo\desk_066_plan.png
 After image saved: C:\Users\Documents\GitHub\ComputerVision\teacher_demo\desk_066_after.png
 
+---
+
 ## Evidence
 
-一、项目背景与目标（1 段）
-说明课程/作业要求是什么，你们要解决的真实问题是什么（例如：从单张桌面照片判断乱不乱、给出可执行整理建议）。写清输入（照片）、输出（分数、等级、文字建议、可选可视化），以及评价标准在你们心里是什么（可复现、可解释、和人的直觉大致一致等）。
+The system follows a linear pipeline with optional branches. First, a **YOLOv8** detector trained on our desk dataset predicts bounding boxes and class labels. Second, a **rule-based tidy scoring module** maps detections and geometry to penalties and a 0–100 score. Third, a **language module** turns penalties and labels into short reasons and zone-based suggestions. Fourth, **visual modules** draw movement plans, schematic “after” layouts, and a relayout image; our `run_pipeline` / `teacher_demo` scripts also save a **detection plot**, a **before/after strip**, and related PNGs. Optionally, a **binary classifier** (ResNet18, tidy vs untidy) can gate batch jobs so that already-tidy images are skipped—this is a workflow optimisation, not the definition of tidiness.
 
-二、总体技术路线（1 小段 + 可配一张架构图）
-用一段话概括流水线：数据 → YOLO 检测 → 规则化 Tidy Score →（可选）分类门控 → 语言建议 → 可视化 / Demo。说明各模块谁依赖谁（例如：分数完全依赖检测结果；建议依赖分数与标签）。若交电子版，可画一张方框图放在这里。
+System architecture and data flow：Dataset → Train YOLO → Infer → TidyScore → Language → Visuals / Demo
 
-三、数据与检测基线：YOLOv8 训练
-3.1 数据集
-写数据集来源（如 Roboflow 导出、类别列表、训练/验证划分）、标注格式（YOLO）、与桌面整洁任务相关的类别设计（Core / Study / Temporary / Clutter 等与标签的对应关系）。
+We used a YOLO-format desk dataset (imported from Roboflow-style exports), with train/validation splits and class names aligned to items we care about on a desk: laptops, books, pens, mugs, cables, and so on. These raw labels are later **mapped** in software to higher-level **categories** used only for scoring—Core work items, study items, temporary items, and clutter—so that the same detector can support both “what object is this?” and “how much does this kind of object contribute to mess?”.
 
-3.2 模型与训练设置
-模型选型（如 YOLOv8m）、训练产物路径（如 runs/detect/.../weights/best.pt）、验证集上关键指标（mAP、P、R 等，从 results.csv 或验证报告摘一行最终值）。
+We trained a **YOLOv8m** detector; the best weights are stored under `runs/detect/desk_tidy_runs/v4_yolov8m_roboflow_style/weights/best.pt`. On the **validation split at the end of training** (final epoch in `results.csv`), indicative box metrics are approximately:
 
-3.3 推理参数作为「第一轮迭代」
-说明你们发现仅靠默认 conf/iou/imgsz 会出现漏检、重复框等问题，因此做了多轮试错，记录例如：conf=0.4、iou=0.5、imgsz=640 等，并用少量样例图（如 desk_017、desk_038）说明「调整前 vs 调整后」检测数量或观感的变化。这一节的要点是：检测质量直接约束后面所有分数，所以迭代从这里开始。
 
-四、整洁评分：从框架文档到代码实现
-4.1 评分哲学
-用一段话写：Tidy Score = 100 − Total Penalty，Penalty 由若干维度相加，目标是可解释而不是黑盒。
+| Metric (val, last epoch)       | Value  |
+| ------------------------------ | ------ |
+| Precision (B)                  | ~0.783 |
+| Recall (B)                     | ~0.816 |
+| mAP@0.5                        | ~0.851 |
+| mAP@0.5:0.95                   | ~0.803 |
 
-4.2 各维度对应「规则」与「用到的信息」  
-按模块写（不必很长，每段 3～5 句即可）：
+These numbers describe **localisation and classification quality on the validation set**, not the tidiness score itself. They should be cited when discussing detector reliability; for “does the desk *look* tidy to a human,” separate subjective discussion is needed (Section 7).
 
-物体数量（Object Load）：只依赖检测个数与分档表。
-类别（Category）：标签映射到 Core/Study/Temporary/Clutter，每类单位惩罚不同。
-中央工作区（Workspace）：定义中央 60% 区域；用框的中心点是否落入该区域；强调你们从「每物扣一次」迭代为「按类别在区内计罚」的原因（更合理、减少重复惩罚）。
-空间杂乱（Spatial Disorder）：包含分散度与重叠；说明重叠最初用框 IoU，后来迭代为 mask/前景辅助 + 细长物体在平面上的补充规则（减少并排笔误报、提高笔在书上等情形）。
-对齐（Alignment）：按类别选用 minAreaRect 或 HoughLinesP，与桌面参考角比较；说明哪些类别不测角度。
-4.3 等级划分
-说明 Tidy / Slightly Messy / Messy / Very Messy 与分数区间的对应，作为面向用户的解释层。
+**[FIGURE 4 — Placeholder]**  
+*Suggested content:* **PR / F1 / mAP curves** from `runs/detect/desk_tidy_runs_eval/v4_test/` (e.g. `BoxF1_curve.png`, `BoxPR_curve.png`) or screenshot from Ultralytics results.  
+*Caption example:* “Detection metrics on the evaluation run (v4 test).”
 
-五、工程迭代过程（建议单独成节，这是老师最想看的「证据链」）
-用时间线或版本线写，每一段包含：问题 → 你们怎么做 → 结果/仍存在的问题。
+Before trusting any tidy score, we tuned **post-processing** of the detector. Using default thresholds often yielded too few boxes (missed objects) or unstable duplicates. We converged toward settings such as **confidence ≈ 0.4**, **NMS IoU ≈ 0.5**, and **inference size 640**, and checked behaviour on named examples (e.g. images where the human count of objects was known). This iteration is **evidence-driven**: we compared class histograms and box counts against expectation, not only aggregate mAP.
 
-可按下面顺序组织（与你们对话历史一致，可按实际删改）：
+**[FIGURE 5 — Placeholder]**  
+*Suggested content:* Side-by-side **same image** with two settings (e.g. low vs tuned `conf`) or table of *detected count vs expected count* for 2–3 filenames.  
+*Caption example:* “Effect of confidence threshold on detection count (illustrative).”
 
-Baseline：只有检测 + 简单打分或粗糙规则。
-检测参数调优：针对具体图片调 conf/iou/imgsz，改善漏检与重复框。
-工作区与遮挡逻辑：中央区域比例调整；工作区惩罚改为按类。
-重叠逻辑迭代：IoU + 包含度 → 更严/更松的阈值 → mask 重叠 → 细长物体规则；可举 1～2 张典型图（如 desk_065 并排笔、desk_051 笔在书上）。
-对齐：从「无」到按类别估角度并计入 penalty。
-分类器门控（可选）：ResNet 二分类用于批量流程或跳过「已整洁」图；说明不能替代主观整洁评价。
-语言建议与表格化输出：从逐条罗列到按区域/动作分组。
-可视化与 Demo：检测图、plan/relayout、before/after 条带、一键 teacher_demo / 网页 Demo 等。
-仓库与文档整理：scoring_module、README 一键命令、文档索引等。
-这一节里，每个迭代点最好有一句「证据」：例如某张图 overlap 从 0 变为 1、或 CSV 中一批图的分数分布变化——不必多，2～3 个 concrete 例子就够。
+**Object load** penalises simply having **many** objects on the desk, using stepped brackets (e.g. more objects → higher penalty up to a cap). **Category penalty** assigns each detected label to a small set of semantic categories (core, study, temporary, clutter) and applies different per-object weights, reflecting that clutter-like items are penalised more heavily than core tools. **Workspace obstruction** uses a **central rectangle** covering the middle **60%** of the image area; objects whose box **centre** falls inside are considered to obstruct the “workspace.” We iterated this from a stricter central region and later refined **how** workspace penalty accumulates—moving from “charge per object” toward **charging per category present in the zone**, so one category does not multiply unfairly with many instances.
 
-六、评估与局限性（诚实收尾）
-6.1 检测侧评估
-YOLO 在验证集上的 mAP/P/R（已给数字可引用）；若做了 v3 vs v4 或不同 conf 的对比，可简述。
+**Spatial disorder** has two strands. **Dispersion** measures how spread out objects are across the image and maps to low/medium/high penalty bands. **Overlap** started from bounding-box **IoU** and **containment** rules; we then added **mask-assisted overlap** to better approximate real occlusion than axis-aligned rectangles alone, and **elongated-object heuristics** (e.g. pens on books) using overlap ratios and principal-axis coverage so that small items on large surfaces are not missed, while adjacent similar objects (e.g. two pens side by side) are less often falsely flagged.
 
-6.2 整洁分与主观感受
-说明规则分是设计产物，与「每个人心中的整洁」不完全一致；举 1 个可能分数与直觉不一致的情况（检测错、类别映射争议、工作区定义等）。
+**Alignment** adds penalty when an object’s estimated orientation deviates from the assumed desk direction (0°). **Rectangular** items use **OpenCV `minAreaRect`** on the crop; **elongated** items use `**HoughLinesP`**; other categories may skip angle estimation. This was a later iteration: early versions had no alignment term.
 
-6.3 系统不能做什么
-一段话写清：不理解意图、不保证物理可行、对遮挡/反光/训练外类别脆弱等——与「evaluation」段落一致即可，显得严谨。
+**[FIGURE 6 — Placeholder]**  
+*Suggested content:* Screenshot of **terminal or log** showing `Tidy Score`, `Total Penalty`, and **penalty breakdown** lines for one image (e.g. from `teacher_demo` output).  
+*Caption example:* “Example scored output with interpretable penalty breakdown.”
 
-七、最终交付物（给老师一个 checklist）
-列出可提交内容：代码仓库结构、主文档（如 Scoring Framework.md）、训练权重位置说明、一键运行命令（README 里那行）、样例输出（检测图、分数打印、before/after 图）、若有 网页 Demo 则写访问方式或截图位置。
+We treated concrete failures as requirements. For **workspace**, tightening or loosening the central zone and switching to **per-category** obstruction addressed cases where the score felt too harsh or too blind to “how” the desk was blocked. For **overlap**, cases like **many apparent overlaps but IoU-only score zero** led to mask-based metrics; cases like **adjacent pens** led to stricter rules for line-like vs line-like pairs; cases like **a pen on a book** led to elongated-on-surface rules. Each change was motivated by a **named image** or pattern and checked again on a small set of desks.
 
-八、结论（1 段）
-总结：项目完成了「检测 + 可解释评分 + 建议 + 可视化」的闭环；中间通过多轮参数与规则迭代把失败案例变成可讲清楚的设计决策；未来可在数据、模型、与主观 user study 上继续改进。
+**[FIGURE 7 — Placeholder]**  
+*Suggested content:* **Before/after rule behaviour** on one problematic image (e.g. overlap count or penalty line before vs after a code change)—can be a small table or two cropped detection images.  
+*Caption example:* “Iterative refinement driven by failure cases (illustrative).”
+
+We added a **ResNet18** binary classifier (tidy vs untidy) trained on labelled desk crops, optional for **gating** in batch export so “already tidy” images need not be fully rescored. The **language module** groups suggestions by action and target zone (e.g. move stationery items together) rather than one sentence per box. **Visual outputs** include plan/after diagrams and a **relayout** image; the pipeline composes a **before/after** strip comparing the original photo to the suggested layout. Separately, a **web demo** was built so users can choose handedness, upload a photo, and walk through the same story interactively—the implementation lives outside the minimal GitHub core but is part of the full project story.
+
+**[FIGURE 8 — Placeholder]**  
+*Suggested content:* `*_detection.png` and `*_before_after.png` from `teacher_demo/` or `pipeline_output/`.  
+*Caption example:* “Detection overlay and before/after comparison strip.”
+
+**[FIGURE 9 — Placeholder]**  
+*Optional:* Screenshot of the **web demo** (handedness → upload → score → suggestions).  
+*Caption example:* “Web demo workflow (if submitted separately).”
+
+### Deliverables checklist
+
+| Item                           | Location / note                                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Scoring specification          | `scoring_module/docs/Scoring Framework.md`                                                                        |
+| Main pipeline                  | `scripts/run_pipeline.py`                                                                                         |
+| One-command demo               | `README.md` → `python scripts/teacher_demo.py …`                                                                  |
+| Trained detector weights       | `runs/detect/desk_tidy_runs/v4_yolov8m_roboflow_style/weights/best.pt` *(may be gitignored; provide if required)* |
+| Example CSV / language exports | e.g. `scoring_module/outputs/`, `language_score_results.md`                                                       |
+| This evidence narrative        | `docs/PROJECT_EVIDENCE.md`                                                                                        |
+
+---
 
 ## Evaluation
 
@@ -167,6 +179,8 @@ A key strength of the system is that it operationalises the abstract concept of 
 However, the system has several limitations. First, its performance depends heavily on the accuracy of the object detector. Missed detections or incorrect labels can directly affect the score. Second, the scoring system is based on predefined rules, which reflect design assumptions and may not generalise across different cultures, desk sizes, or personal work styles. Third, object overlap and segmentation are only approximated, making it difficult to handle cases such as transparent objects, heavy occlusion, or unseen categories. Fourth, orientation estimation is relatively coarse and may be unreliable for irregular shapes or complex backgrounds. Fifth, the generated layouts are only illustrative suggestions and do not consider physical constraints such as gravity, cable length, ergonomics, or user habits. Finally, the binary “tidy vs. cluttered” judgement is based on a simple classifier and should not be interpreted as an objective measure of productivity or organisation.
 
 Overall, this system is best understood as an interpretable prototype rather than a complete solution. It demonstrates how visual detection can be combined with rule-based reasoning to provide structured feedback and actionable suggestions. At the same time, it highlights the trade-offs involved in automating subjective concepts such as tidiness, and the continued importance of human judgement in understanding context and personal needs.
+
+---
 
 ## Personal Statement -- Yiwen Cao
 
@@ -183,6 +197,8 @@ I also worked on the text-based recommendation component, producing concise and 
 Through this project, I not only developed technical skills in computer vision and system building, but also gained a stronger understanding of how to design an interpretable and extensible system. One key lesson was that modularising detection, classification, scoring, and recommendation made the system easier to explain, test, and improve. At the same time, the project showed me the limitations of purely rule-based approaches in capturing human perceptions of order. 
 
 The current system still has limitations, including relatively simple layout rules that only consider left- and right-handed preferences in a basic way, and the lack of safety-aware logic, such as detecting risky placements like a cup positioned too close to a laptop. If given more time, I would like to develop a more personalised strategy system and explore the use of large language models to generate more natural, context-sensitive recommendations.
+
+---
 
 ## Personal Statement - Linda
 
