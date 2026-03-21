@@ -187,6 +187,14 @@ The visual relayout module (SAM-based cutouts placed into labelled zones) turns 
 
 *Figure 6 — Example **desk_066**: messy desk photo (left) vs rule-based zone relayout with grouped actions (right).*
 
+### Web demo (TidyMyDesk)
+
+The public demo at **[tidymydesk.com](https://tidymydesk.com/)** wraps the same pipeline in a browser UI: preferences (e.g. handedness), upload, scoring, and a **Plan** view with reorganised zone layout, grouped actions (keep / move / remove), tidy score, reasons, and suggestions.
+
+![TidyMyDesk web app — Plan page with optimised layout, grouped actions, and tidy score sidebar](docs/figures/web_demo_tidymydesk_plan.png)
+
+*Figure 7 — **Web demo (TidyMyDesk):** PLAN screen showing zone-based “after” layout, grouped recommendations, and score + reasons + suggestions (example: desk_066-style result).*
+
 ### Deliverables checklist
 
 | Item                           | Location / note                                                                                                   |
